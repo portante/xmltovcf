@@ -1,0 +1,8 @@
+#!./bin/python3
+
+from lxml import etree
+import sys
+
+tree = etree.parse(sys.argv[1])
+
+print(etree.tostring(tree, pretty_print=True, encoding=str))

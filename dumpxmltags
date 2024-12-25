@@ -1,0 +1,27 @@
+#!./bin/python3
+
+# Dump the XML tags for all contacts.  Use with `<prog> | sort | uniq` to
+# generate a combined list of all the tags across all contacts.
+from lxml import etree
+import sys
+
+space_s = "{http://www.w3.org/XML/1998/namespace}space"
+
+tree = etree.parse(sys.argv[1])
+
+root = tree.getroot()
+
+# First very the total number of contacts match the element count
+contacts_n = int(root.attrib['elementCount'])
+root_n = len(root)
+if contacts_n != root_n:
+    print(f"Warning:  XML `elementCount` for contacts, {contacts_n}, does not match number of contacts found, {root_n}", fp=sys.stderr)
+
+for contact in root:
+    del contact.attrib[space_s]
+    assert len(contact.attrib) == 0
+    assert contact.tag == 'contact'
+    for el in contact:
+        del el.attrib[space_s]
+        assert len(el.attrib) == 0
+        print(el.tag)
