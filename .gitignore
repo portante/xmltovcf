@@ -169,3 +169,10 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Local data used to experiment with XML to vCard conversion
+data
+
+# Python venv configuration
+pyvenv.cfg
+bin
