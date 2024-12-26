@@ -4,7 +4,7 @@
 Pretty print XML files with customizable formatting options.
 
 This script takes an XML file as input and outputs a properly formatted version
-with configurable indentation, encoding, and XML declaration options.
+with configurable encoding and XML declaration options.
 """
 
 from lxml import etree
@@ -20,12 +20,6 @@ def parse_args():
     parser.add_argument(
         'input_file',
         help='Input XML file to pretty print'
-    )
-    parser.add_argument(
-        '--indent',
-        type=int,
-        default=2,
-        help='Number of spaces for indentation (default: 2)'
     )
     parser.add_argument(
         '--no-declaration',
@@ -58,13 +52,6 @@ def main():
         args = parse_args()
         validate_file(args.input_file)
 
-        # Validate indent value
-        if args.indent < 0:
-            raise ValueError("Indent must be non-negative")
-        if args.indent > 8:
-            print("Warning: Large indent values may cause excessive line lengths",
-                  file=sys.stderr)
-
         # Parse and format XML
         tree = etree.parse(args.input_file)
         output = etree.tostring(
@@ -72,8 +59,7 @@ def main():
             pretty_print=True,
             encoding=args.encoding,
             xml_declaration=not args.no_declaration,
-            with_tail=True,
-            indent=' ' * args.indent
+            with_tail=True
         )
 
         # Write output

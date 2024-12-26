@@ -80,7 +80,7 @@ Christmas Card address label names. Those values are converted using the
 Pretty print XML files with customizable formatting.
 
 #### Features
-- Formats XML with proper indentation (configurable spaces)
+- Formats XML with proper indentation
 - Optional XML declaration control
 - Configurable output encoding
 - Output to file or stdout
@@ -91,9 +91,6 @@ Pretty print XML files with customizable formatting.
 ```bash
 # Basic pretty printing to stdout
 ./ppxml input.xml
-
-# Custom 4-space indentation
-./ppxml input.xml --indent=4
 
 # Omit XML declaration
 ./ppxml input.xml --no-declaration
