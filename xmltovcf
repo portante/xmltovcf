@@ -27,9 +27,11 @@ from typing import Dict, List, Optional, Set, Any
 XML_SPACE_NS = "{http://www.w3.org/XML/1998/namespace}space"
 EMAIL_TYPE_MAP = {'0': 'work', '1': 'home', '2': 'other'}
 
+
 class ContactError(Exception):
     """Base exception for contact processing errors."""
     pass
+
 
 class Contact:
     """Represents a single contact with all its data."""
@@ -47,19 +49,35 @@ class Contact:
         }
         self.errors: List[str] = []
 
+    IGNORED_TAGS = frozenset((
+        'OPFContactCanDelete',
+        'OPFContactCanEdit',
+        'OPFContactCopyAge',
+        'OPFContactCopyBusinessAlias',
+        'OPFContactCopyCompletedDateTime',
+        'OPFContactCopyContactImage',
+        'OPFContactCopyCustom3Data',
+        'OPFContactCopyCustomPhone3',
+        'OPFContactCopyDueDateTime',
+        'OPFContactCopyFuriganaChildrensNames',
+        'OPFContactCopyInterests',
+        'OPFContactCopyModDate',
+        'OPFContactCopyNotes',
+        'OPFContactCopyPager',
+        'OPFContactCopyStartDateTime',
+        'OPFContactGetFlagStatus',
+        'OPFContactIsJapaneseContact',
+        'OPFContactType',
+        ))
+
     def parse(self) -> None:
         """Parse all fields from the contact element."""
         try:
-            # Clean up XML space attributes
-            if XML_SPACE_NS in self.element.attrib:
-                del self.element.attrib[XML_SPACE_NS]
-
             # Process each element
             for el in self.element:
-                if XML_SPACE_NS in el.attrib:
-                    del el.attrib[XML_SPACE_NS]
+                if el.tag in self.IGNORED_TAGS:
+                    continue
                 self._process_element(el)
-
         except Exception as e:
             self.errors.append(f"Error parsing contact: {str(e)}")
 
@@ -92,7 +110,6 @@ class Contact:
                 self.data['note'] = element.text.strip()
             elif element.tag in ('OPFContactCopyPrimaryCategory', 'OPFContactCopyCategoryList'):
                 self._process_categories(element)
-
         except Exception as e:
             self.errors.append(f"Error processing element {element.tag}: {str(e)}")
 
@@ -395,6 +412,7 @@ class Contact:
             cats = vcard.add('categories')
             cats.value = other_cats
 
+
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -431,6 +449,7 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+
 def setup_logging(debug: bool = False) -> None:
     """Configure logging system."""
     level = logging.DEBUG if debug else logging.INFO
@@ -438,6 +457,7 @@ def setup_logging(debug: bool = False) -> None:
         level=level,
         format='%(levelname)s: %(message)s'
     )
+
 
 def validate_xml_file(filepath: str) -> None:
     """Validate that the XML file exists and is readable."""
@@ -448,13 +468,139 @@ def validate_xml_file(filepath: str) -> None:
     if not os.access(filepath, os.R_OK):
         raise PermissionError(f"File not readable: {filepath}")
 
+
 def validate_contact_xml(root: etree.Element) -> None:
     """Validate that the XML has the expected structure."""
+
+    # Expected contact tags.  This map is used to help ensure coverage for all
+    # the tags found across the contacts.
+    expected_tags_d = {
+        'OPFContactCanDelete': 0,                  # Ignore
+        'OPFContactCanEdit': 0,                    # Ignore
+        'OPFContactCopyAge': 0,                    # Ignore
+        'OPFContactCopyBusinessAlias': 0,          # Ignore
+        'OPFContactCopyCompletedDateTime': 0,      # Ignore
+        'OPFContactCopyContactImage': 0,           # Ignore
+        'OPFContactCopyCustom3Data': 0,            # Ignore
+        'OPFContactCopyCustomPhone3': 0,           # Ignore
+        'OPFContactCopyDueDateTime': 0,            # Ignore
+        'OPFContactCopyFuriganaChildrensNames': 0, # Ignore
+        'OPFContactCopyInterests': 0,              # Ignore
+        'OPFContactCopyModDate': 0,                # Ignore
+        'OPFContactCopyNotes': 0,                  # Ignore (maybe BeautifulSoup?)
+        'OPFContactCopyPager': 0,                  # Ignore
+        'OPFContactCopyStartDateTime': 0,          # Ignore
+        'OPFContactGetFlagStatus': 0,              # Ignore
+        'OPFContactIsJapaneseContact': 0,          # Ignore
+        'OPFContactType': 0,                       # Ignore
+
+        'OPFContactCopyDisplayName': 0,            # Map to 'FN'
+
+        'OPFContactCopyTitle': 0,                  # Christmas Card Name
+                                                   #   - typically this would be mapped to 'N'->'prefix'
+                                                   #
+                                                   #  X-ABRELATEDNAMES;type=pref:<value-text>
+                                                   #  X-ABLabel:Christmas Card Name
+
+        'OPFContactCopyFirstName': 0,              # Map to 'N'->'given'
+        'OPFContactCopyLastName': 0,               # Map to 'N'->'family'
+        'OPFContactCopyMiddleName': 0,             # Map to 'N'->'additional'
+        'OPFContactCopySetNameSuffix': 0,          # Map to 'N'->'suffix'
+
+        'OPFContactCopyNickName': 0,               # Map to 'NICKNAME'
+
+        'OPFContactCopyHomeStreetAddress': 0,      # Map to 'ADR;type=HOME;type=pref:<pobox>;<extended>;<street>;<city>;<region/state>;<code/zip>;<country>'
+        'OPFContactCopyHomeCity': 0,
+        'OPFContactCopyHomeState': 0,
+        'OPFContactCopyHomeZip': 0,
+        'OPFContactCopyHomeCountry': 0,
+
+        'OPFContactCopyBusinessStreetAddress': 0,  # Map to 'ADR;type=WORK;type=pref:<pobox>;<extended>;<street>;<city>;<region/state>;<code/zip>;<country>'
+        'OPFContactCopyBusinessCity': 0,
+        'OPFContactCopyBusinessState': 0,
+        'OPFContactCopyBusinessZip': 0,
+        'OPFContactCopyBusinessCountry': 0,
+
+        'OPFContactCopyOtherStreetAddress': 0,     # Map to 'ADR;type=OTHER:<pobox>;<extended>;<street>;<city>;<region/state>;<code/zip>;<country>'
+        'OPFContactCopyOtherCity': 0,
+        'OPFContactCopyOtherState': 0,
+        'OPFContactCopyOtherZip': 0,
+
+        'OPFContactCopyHomeFax': 0,                # Map to 'TEL;type=HOME;type=FAX:<value-text>'
+        'OPFContactCopyHomePhone': 0,              # Map to 'TEL;type=HOME;type=VOICE;type=pref:<value-text>'
+        'OPFContactCopyHomePhone2': 0,             # Map to 'TEL;type=HOME;type=VOICE:<value-text>'
+        'OPFContactCopyCellPhone': 0,              # Map to 'TEL;type=CELL;type=VOICE:<value-text>'
+
+        'OPFContactCopyBusinessFax': 0,            # Map to 'TEL;type=WORK;type=FAX:<value-text>'
+        'OPFContactCopyBusinessPhone': 0,          # Map to 'TEL;type=WORK;type=VOICE;type=pref:<value-text>'
+        'OPFContactCopyBusinessPhone2': 0,         # Map to 'TEL;type=WORK;type=VOICE:<value-text>'
+
+        'OPFContactCopyCustomPhone1': 0,           # Map to 'TEL;type=OTHER;type=VOICE:<value-text>'
+
+        'OPFContactCopyBusinessTitle': 0,          # Map to 'TITLE'
+
+        'OPFContactCopyBusinessDepartment': 0,     # Map to 'ORG:<company>;<office>;<department>'
+        'OPFContactCopyBusinessCompany': 0,
+        'OPFContactCopyBusinessOffice': 0,
+
+        'OPFContactCopyHomeWebPage': 0,            # Map to 'URL;type=HOME:...'
+
+        'OPFContactCopyBusinessHomePage': 0,       # Map to 'URL;type=WORK:...'
+
+        'OPFContactCopyAnniversary': 0,            # Map to 'ANNIVERSARY'
+        'OPFContactCopyBirthday': 0,               # Map to 'BDAY'
+
+        'OPFContactCopySpousesName': 0,            # Map to 'RELATED;type=SPOUSE:<value-text>'
+        'OPFContactCustomData7': 0,                # Map to 'RELATED;type=MAIDENNAME:<value-text>'
+        'OPFContactCopyChildren': 0,               # Map to 'RELATED;type=CHILD:<value-text>'
+
+        'OPFContactCopyNotesPlain': 0,             # Map to 'NOTE'
+
+        'OPFContactCopyDefaultEmailAddress': 0,    # Map to 'EMAIL;type=pref:<value-text>'
+        'OPFContactCopyEmailAddressList': 0,
+        'OPFContactCopyEmailAddressList1': 0,
+        'OPFContactCopyEmailAddressList2': 0,
+
+        'OPFContactCopyPrimaryCategory': 0,        # Map to 'CATEGORIES;type=pref:...'
+        'OPFContactCopyCategoryList': 0,           # Map to 'CATEGORIES:...'
+    }
+
     if root.tag != 'contacts':
         raise ValueError(f"Expected root tag 'contacts', found '{root.tag}'")
+
+    # Build up a list of existing, and expected, contact tags.  We are
+    # expecting only `contact` tags off the root, so issue an error and exit
+    # if any are encountered.  If any contact has tags we don't have in our
+    # expected tags table, flag it and exit.  Most of the XML elements emitted
+    # by Microsoft Office contain the "preserve space" attribute, which we
+    # conveniently remove along the way while also checking that there are no
+    # other attributes on the top-level contact elements.
+    contact_id = 0
     for contact in root:
         if contact.tag != 'contact':
-            raise ValueError(f"Expected 'contact' tag, found '{contact.tag}'")
+            raise ValueError(f"Expected 'contact' tag, found '{contact.tag}', after processing {contact_id} contact(s)")
+        contact_id += 1
+        # Clean up XML space attributes
+        if XML_SPACE_NS in contact.attrib:
+            del contact.attrib[XML_SPACE_NS]
+        if len(contact.attrib) != 0:
+            raise ValueError(f"Error: contact #{contact_id:d} has unexpected attributes: '{contact.attrib}'")
+        for el in contact:
+            if XML_SPACE_NS in el.attrib:
+                del el.attrib[XML_SPACE_NS]
+            if len(el.attrib) != 0:
+                raise ValueError(f"Error: contact #{contact_id:d} has unexpected attributes on element with tag '{el.tag}': '{el.attrib}'")
+            if el.tag not in expected_tags_d:
+                raise ValueError(f"Error: contact #{contact_id:d} has an unexpected tag, '{el.tag}': '{el.text}'")
+            expected_tags_d[el.tag] += 1
+    missing_tags_l = []
+    for tag, count in expected_tags_d.items():
+        if count == 0:
+            missing_tags_l.append(tag)
+    if missing_tags_l:
+        missing_tags_s = ", ".join(missing_tags_l)
+        raise ValueError(f"Error: the following tags were not encountered: {missing_tags_s}")
+
 
 def process_contacts(root: etree.Element, args: argparse.Namespace):
     """Process all contacts with progress reporting."""
@@ -486,6 +632,7 @@ def process_contacts(root: etree.Element, args: argparse.Namespace):
 
     logging.info(f"Processed {processed} contacts "
                 f"({errors} errors, {skipped} skipped)")
+
 
 def main() -> None:
     """Main entry point."""
