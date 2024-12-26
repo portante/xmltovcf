@@ -14,12 +14,6 @@ tree = etree.parse(sys.argv[1])
 # Start at the root of the tree.
 root = tree.getroot()
 
-# First very the total number of contacts match the element count
-contacts_n = int(root.attrib['elementCount'])
-root_n = len(root)
-if contacts_n != root_n:
-    print(f"Warning:  XML `elementCount` for contacts, {contacts_n}, does not match number of contacts found, {root_n}", fp=sys.stderr)
-
 ignored_tags = frozenset((
     'OPFContactCanDelete',
     'OPFContactCanEdit',
@@ -136,22 +130,39 @@ handled_tags_d = {
 # Email "type" mapping
 email_type_map_d = { '0': 'work', '1': 'home', '2': 'other' }
 
-# Build up a list of existing contact tags
+# First very the total number of contacts match the element count
+contacts_n = int(root.attrib['elementCount'])
+root_n = len(root)
+if contacts_n != root_n:
+    print(f"Warning:  XML `elementCount` for contacts, {contacts_n}, does not match number of contacts found, {root_n}", file=sys.stderr)
+contact_n = 0
+
+# Build up a list of existing, and expected, contact tags.  We are expecting
+# only `contact` tags off the root, so issue an error and exit if any are
+# encountered.  If any contact has tags we don't have in our "handled tags"
+# table, flag it and exit.  Most of the XML elements emitted by Microsoft
+# Office contain the "preserve space" attribute, which we conveniently remove
+# along the way while also checking that there are no other attributes on the
+# top-level contact elements.
 contact_id = 0
 for contact in root:
+    if contact.tag != 'contact':
+        print(f"Error:  expecting all `contact` tags, found {contact.tag}, after processing {contact_id} contact(s)", file=sys.stderr)
+        sys.exit(1)
+    contact_id += 1
     del contact.attrib[space_s]
-    assert len(contact.attrib) == 0
-    assert contact.tag == 'contact'
+    if len(contact.attrib) != 0:
+        print(f"Error: contact #{contact_id:d} has unexpected attributes: '{contact.attrib}'", file=sys.stderr)
+        sys.exit(1)
     for el in contact:
         del el.attrib[space_s]
-        assert len(el.attrib) == 0
+        if len(el.attrib) != 0:
+            print(f"Error: contact #{contact_id:d} has unexpected attributes on element with tag '{el.tag}': '{el.attrib}'", file=sys.stderr)
+            sys.exit(1)
         if el.tag not in handled_tags_d:
-            print(f"Contact #{contact_id:d} has unexpected tag, '{el.tag}': '{el.text}'", file=sys.stderr)
+            print(f"Error: contact #{contact_id:d} has an unexpected tag, '{el.tag}': '{el.text}'", file=sys.stderr)
+            sys.exit(1)
         handled_tags_d[el.tag] += 1
-    contact_id += 1
-
-#for tag_n,count in handled_tags_d.items():
-#    print(f"{count:03d} {tag_n}")
 
 def hom_adr(ha, vcard):
     if ha is not None:
@@ -183,7 +194,9 @@ def oth_adr(oa, vcard):
 # Now that we have verified that all the tags in the list of contacts are
 # handled we can begin building the vCards.
 
+contact_id = 0
 for contact in root:
+    contact_id += 1
     # Create a vCard and add the required "N" and "FN" fields.  These are going
     # to be filled in as we process the contact tags.
     vcard = vobject.vCard()
@@ -196,6 +209,7 @@ for contact in root:
     email_d = {}
     for el in contact:
         if el.tag in ignored_tags:
+            # Skip any ignored tags first
             continue
         if el.tag == 'OPFContactCopyDisplayName' and el.text is not None:
             fn.value = el.text
@@ -421,8 +435,9 @@ for contact in root:
                 if email not in email_d:
                     email_d[email] = dict(primary=child.attrib['OPFContactEmailAddressIsDefault'], emailtype=child.attrib['OPFContactEmailAddressType'])
                 else:
-                    assert (email_d[email]['primary'] == child.attrib['OPFContactEmailAddressIsDefault']), f"p {child.attrib} {email_d}"
-                    assert (email_d[email]['emailtype'] == child.attrib['OPFContactEmailAddressType']), f"t {child.attrib} {email_d}"
+                    if (email_d[email]['primary'] != child.attrib['OPFContactEmailAddressIsDefault']) or (email_d[email]['emailtype'] != child.attrib['OPFContactEmailAddressType']):
+                        print(f"Error: for contact {contact_id:d}, an email address, `{email}`, has inconsistent attributes: previously found '{email_d}', encountered '{child.attrib}'", file=sys.stderr)
+                        sys.exit(1)
             continue
         if el.tag == 'OPFContactCopyPrimaryCategory':
             # Map to 'CATEGORIES;type=pref:...'
