@@ -265,25 +265,25 @@ class Contact:
 
             # Add name fields
             self._add_names(vcard)
-            
+
             # Add addresses
             self._add_addresses(vcard)
-            
+
             # Add phones
             self._add_phones(vcard)
-            
+
             # Add emails
             self._add_emails(vcard)
-            
+
             # Add URLs
             self._add_urls(vcard)
-            
+
             # Add organization info
             self._add_organization(vcard)
-            
+
             # Add categories
             self._add_categories(vcard)
-            
+
             # Add note
             if 'note' in self.data:
                 vcard.add('note').value = self.data['note']
@@ -462,28 +462,28 @@ def process_contacts(root: etree.Element, args: argparse.Namespace):
     processed = 0
     errors = 0
     skipped = 0
-    
+
     for contact_elem in root:
         processed += 1
         if processed % 10 == 0:
             logging.info(f"Processing contact {processed}/{total}")
-        
+
         contact = Contact(contact_elem)
         contact.parse()
-        
+
         if contact.errors and not args.ignore_errors:
             errors += 1
             for error in contact.errors:
                 logging.error(f"Contact {processed}: {error}")
             continue
-            
+
         if args.skip_empty and contact.is_empty():
             skipped += 1
             logging.debug(f"Skipping empty contact {processed}")
             continue
-            
+
         yield contact.to_vcard(args.version)
-    
+
     logging.info(f"Processed {processed} contacts "
                 f"({errors} errors, {skipped} skipped)")
 
@@ -492,17 +492,17 @@ def main() -> None:
     try:
         args = parse_args()
         setup_logging(args.debug)
-        
+
         # Validate input file
         validate_xml_file(args.input_file)
-        
+
         # Parse XML
         tree = etree.parse(args.input_file)
         root = tree.getroot()
-        
+
         # Validate XML structure
         validate_contact_xml(root)
-        
+
         # Verify contact count
         contacts_count = int(root.attrib.get('elementCount', 0))
         actual_count = len(root)
@@ -511,7 +511,7 @@ def main() -> None:
                 f"XML elementCount ({contacts_count}) does not match "
                 f"number of contacts found ({actual_count})"
             )
-        
+
         # Process contacts
         if args.output:
             with open(args.output, 'w') as f:
@@ -520,7 +520,7 @@ def main() -> None:
         else:
             for vcard in process_contacts(root, args):
                 print(vcard.serialize(), end='')
-                
+
     except Exception as e:
         logging.error(str(e))
         sys.exit(1)

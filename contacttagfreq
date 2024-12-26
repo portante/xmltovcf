@@ -88,11 +88,11 @@ def validate_file(filepath: str) -> None:
 def analyze_tag(element: etree.Element, info: TagInfo, max_samples: int) -> None:
     """Analyze a tag's attributes and content."""
     info.count += 1
-    
+
     # Record attributes
     for attr, value in element.attrib.items():
         info.attributes[attr].add(value)
-    
+
     # Record sample values if it's a leaf node
     if len(element) == 0 and element.text:
         text = element.text.strip()
@@ -108,24 +108,24 @@ def format_text_output(tag_infos: Dict[str, TagInfo], total_contacts: int,
     """Format results as text."""
     output = StringIO()
     count_width = len(str(total_contacts)) + 1
-    
+
     for tag, info in tag_infos.items():
         freq = (info.count / total_contacts) * 100.0
         base_info = f"{info.count:{count_width}d} {freq:5.1f}% {tag}"
-        
+
         if show_attrs and info.attributes:
-            attrs = [f"{attr}={sorted(values)}" 
+            attrs = [f"{attr}={sorted(values)}"
                     for attr, values in info.attributes.items()]
             base_info += f"\n  Attributes: {', '.join(attrs)}"
-        
+
         if show_samples and info.sample_values and not info.has_children:
             samples = sorted(info.sample_values)
             base_info += f"\n  Samples: {samples}"
             if info.max_value_length > 50:
                 base_info += f"\n  Max length: {info.max_value_length}"
-        
+
         print(base_info, file=output)
-    
+
     return output.getvalue()
 
 def format_csv_output(tag_infos: Dict[str, TagInfo], total_contacts: int,
@@ -139,7 +139,7 @@ def format_csv_output(tag_infos: Dict[str, TagInfo], total_contacts: int,
     if show_samples:
         headers.extend(['Samples', 'Max Length'])
     writer.writerow(headers)
-    
+
     for tag, info in tag_infos.items():
         freq = (info.count / total_contacts) * 100.0
         row = [tag, info.count, f"{freq:.1f}%"]
@@ -151,7 +151,7 @@ def format_csv_output(tag_infos: Dict[str, TagInfo], total_contacts: int,
             row.append(', '.join(sorted(info.sample_values)))
             row.append(info.max_value_length if not info.has_children else 'N/A')
         writer.writerow(row)
-    
+
     return output.getvalue()
 
 def format_json_output(tag_infos: Dict[str, TagInfo], total_contacts: int,
@@ -173,7 +173,7 @@ def format_json_output(tag_infos: Dict[str, TagInfo], total_contacts: int,
             tag_data['samples'] = sorted(info.sample_values)
             tag_data['max_length'] = info.max_value_length
         result[tag] = tag_data
-    
+
     return json.dumps(result, indent=2)
 
 def main() -> None:
@@ -181,11 +181,11 @@ def main() -> None:
     try:
         args = parse_args()
         validate_file(args.input_file)
-        
+
         # Parse XML and get root
         tree = etree.parse(args.input_file)
         root = tree.getroot()
-        
+
         # Verify contact count
         contacts_count = int(root.attrib.get('elementCount', 0))
         actual_count = len(root)
@@ -193,7 +193,7 @@ def main() -> None:
             print(f"Warning: XML elementCount ({contacts_count}) does not match "
                   f"number of contacts found ({actual_count})",
                   file=sys.stderr)
-        
+
         # Analyze tags
         tag_infos: Dict[str, TagInfo] = defaultdict(TagInfo)
         for i, contact in enumerate(root):
@@ -202,10 +202,10 @@ def main() -> None:
                       f"after processing {i} contact(s)",
                       file=sys.stderr)
                 sys.exit(1)
-            
+
             for element in contact:
                 analyze_tag(element, tag_infos[element.tag], args.max_samples)
-        
+
         # Filter by minimum frequency if specified
         if args.min_freq > 0:
             tag_infos = {
@@ -213,7 +213,7 @@ def main() -> None:
                 for tag, info in tag_infos.items()
                 if (info.count / actual_count * 100) >= args.min_freq
             }
-        
+
         # Sort results
         if args.sort == 'freq':
             sorted_tags = dict(sorted(
@@ -222,7 +222,7 @@ def main() -> None:
             ))
         else:  # sort by name
             sorted_tags = dict(sorted(tag_infos.items()))
-        
+
         # Format output
         if args.format == 'csv':
             output = format_csv_output(
@@ -239,14 +239,14 @@ def main() -> None:
                 sorted_tags, actual_count,
                 args.show_attrs, args.show_samples
             )
-        
+
         # Write output
         if args.output:
             with open(args.output, 'w') as f:
                 f.write(output)
         else:
             print(output, end='')
-            
+
     except etree.XMLSyntaxError as e:
         print(f"Error parsing XML: {str(e)}", file=sys.stderr)
         sys.exit(1)
