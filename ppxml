@@ -1,8 +1,94 @@
-#!./bin/python3
+#!/usr/bin/env python3
+
+"""
+Pretty print XML files with customizable formatting options.
+
+This script takes an XML file as input and outputs a properly formatted version
+with configurable indentation, encoding, and XML declaration options.
+"""
 
 from lxml import etree
 import sys
+import os
+import argparse
 
-tree = etree.parse(sys.argv[1])
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Pretty print XML files with customizable formatting'
+    )
+    parser.add_argument(
+        'input_file',
+        help='Input XML file to pretty print'
+    )
+    parser.add_argument(
+        '--indent',
+        type=int,
+        default=2,
+        help='Number of spaces for indentation (default: 2)'
+    )
+    parser.add_argument(
+        '--no-declaration',
+        action='store_true',
+        help='Omit XML declaration'
+    )
+    parser.add_argument(
+        '--encoding',
+        default='utf-8',
+        help='Output encoding (default: utf-8)'
+    )
+    parser.add_argument(
+        '--output', '-o',
+        help='Output file (default: stdout)'
+    )
+    return parser.parse_args()
 
-print(etree.tostring(tree, pretty_print=True, encoding=str))
+def validate_file(filepath):
+    """Validate that the input file exists and is readable."""
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File not found: {filepath}")
+    if not os.path.isfile(filepath):
+        raise ValueError(f"Not a file: {filepath}")
+    if not os.access(filepath, os.R_OK):
+        raise PermissionError(f"File not readable: {filepath}")
+
+def main():
+    """Main entry point."""
+    try:
+        args = parse_args()
+        validate_file(args.input_file)
+
+        # Validate indent value
+        if args.indent < 0:
+            raise ValueError("Indent must be non-negative")
+        if args.indent > 8:
+            print("Warning: Large indent values may cause excessive line lengths",
+                  file=sys.stderr)
+
+        # Parse and format XML
+        tree = etree.parse(args.input_file)
+        output = etree.tostring(
+            tree,
+            pretty_print=True,
+            encoding=args.encoding,
+            xml_declaration=not args.no_declaration,
+            with_tail=True,
+            indent=' ' * args.indent
+        )
+
+        # Write output
+        if args.output:
+            with open(args.output, 'wb') as f:
+                f.write(output)
+        else:
+            sys.stdout.buffer.write(output)
+
+    except etree.XMLSyntaxError as e:
+        print(f"Error parsing XML: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

@@ -11,10 +11,9 @@ Convert Microsoft Office XML contact files to vCard (.vcf) format.
 This is NOT intended to be a general purpose tool to convert any XML file to
 vCard. It is more of an _example_ of how you perform such a conversion.
 
-However, there are nuances in how each of us uses/used Microsoft Office
-Contacts, so it's probably not going to work out of the box for you. As a
-result, this tool is a little less complex than a "one size fits all"
-solution.
+However, there are nuances in how each of us uses/used Microsoft Office Contacts,
+so it's probably not going to work out of the box for you. As a result, this
+tool is a little less complex than a "one size fits all" solution.
 
 The list XML element tags considered was derived from the output of the
 `contacttagfreq` tool. From there, we manually added tags as we reviewed the
@@ -54,13 +53,29 @@ Christmas Card address label names. Those values are converted using the
 Pretty print XML files with customizable formatting.
 
 #### Features
-- Formats XML with proper indentation
+- Formats XML with proper indentation (configurable spaces)
 - Optional XML declaration control
-- Preserves document structure
+- Configurable output encoding
+- Output to file or stdout
+- Comprehensive error handling
+- Input validation
 
 #### Usage
 ```bash
-./ppxml contacts.xml
+# Basic pretty printing to stdout
+./ppxml input.xml
+
+# Custom 4-space indentation
+./ppxml input.xml --indent=4
+
+# Omit XML declaration
+./ppxml input.xml --no-declaration
+
+# Specify output encoding
+./ppxml input.xml --encoding=utf-16
+
+# Write to output file
+./ppxml input.xml -o output.xml
 ```
 
 ### contacttagfreq
