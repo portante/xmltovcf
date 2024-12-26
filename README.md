@@ -8,6 +8,49 @@ contact files.
 ### xmltovcf
 Convert Microsoft Office XML contact files to vCard (.vcf) format.
 
+#### Features
+- Converts complex Microsoft Office XML contact exports to standard vCard format
+- Supports vCard versions 3.0 and 4.0
+- Handles various contact fields:
+  - Names (first, last, middle, suffix)
+  - Phone numbers (home, work, cell, fax)
+  - Email addresses with types (home, work, other)
+  - Physical addresses (home, work, other)
+  - Web pages (home, business)
+  - Organization info (company, department, title)
+  - Notes and categories
+  - Special fields (Christmas Card names)
+- Robust error handling and validation
+- Progress reporting
+- Configurable output options
+
+#### Usage
+```bash
+# Basic conversion to stdout
+./xmltovcf contacts.xml
+
+# Save to output file
+./xmltovcf -o contacts.vcf contacts.xml
+
+# Generate vCard 4.0 format
+./xmltovcf --version=4.0 contacts.xml -o contacts.vcf
+
+# Skip empty contacts and continue on errors
+./xmltovcf --skip-empty --ignore-errors contacts.xml
+
+# Enable debug logging
+./xmltovcf --debug contacts.xml
+```
+
+#### Options
+- `input_file`: Input XML contact file (required)
+- `--output`, `-o`: Output vCard file (default: stdout)
+- `--version`: vCard version to generate (3.0 or 4.0, default: 3.0)
+- `--ignore-errors`: Continue processing on errors
+- `--skip-empty`: Skip contacts with no useful data
+- `--debug`: Print debug information
+
+
 This is NOT intended to be a general purpose tool to convert any XML file to
 vCard. It is more of an _example_ of how you perform such a conversion.
 
@@ -32,22 +75,6 @@ _seems_ to mean "other". That may not be the same for another data set.
 This code also handles the weird way we had used "title" to store our
 Christmas Card address label names. Those values are converted using the
 `X-RELATEDNAMES` and `X-ABLabel` vCard fields.
-
-#### Features
-- Converts complex Microsoft Office XML contact exports to standard vCard
-  format
-- Preserves contact details including:
-  - Name (first, last, middle, suffix)
-  - Phone numbers (home, work, cell)
-  - Email addresses
-  - Physical addresses
-  - Web pages
-  - Notes and related information
-
-#### Usage
-```bash
-./xmltovcf contacts.xml > contacts.vcf
-```
 
 ### ppxml
 Pretty print XML files with customizable formatting.
@@ -116,7 +143,6 @@ of tags, their frequencies, attributes, and sample values.
 # Comprehensive analysis with all features
 ./contacttagfreq contacts.xml --show-attrs --show-samples --format=json \
     --min-freq=10 --sort=freq -o analysis.json
-```
 
 ## Requirements
 - Python 3.6+
