@@ -10,7 +10,7 @@ Convert Microsoft Office XML contact files to vCard (.vcf) format.
 
 #### Features
 - Converts complex Microsoft Office XML contact exports to standard vCard format
-- Supports vCard versions 3.0 and 4.0
+- Supports vCard versions 3.0 and 4.0 (default)
 - Handles various contact fields:
   - Names (first, last, middle, suffix)
   - Phone numbers (home, work, cell, fax)
@@ -45,7 +45,7 @@ Convert Microsoft Office XML contact files to vCard (.vcf) format.
 #### Options
 - `input_file`: Input XML contact file (required)
 - `--output`, `-o`: Output vCard file (default: stdout)
-- `--version`: vCard version to generate (3.0 or 4.0, default: 3.0)
+- `--version`: vCard version to generate (3.0 or 4.0, default: 4.0)
 - `--ignore-errors`: Continue processing on errors
 - `--skip-empty`: Skip contacts with no useful data
 - `--debug`: Print debug information

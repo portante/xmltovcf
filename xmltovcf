@@ -256,7 +256,7 @@ class Contact:
             if value and (not isinstance(value, dict) or any(value.values()))
         )
 
-    def to_vcard(self, version: str = '3.0') -> vobject.vCard:
+    def to_vcard(self, version: str = '4.0') -> vobject.vCard:
         """Convert contact data to vCard format."""
         vcard = vobject.vCard()
         try:
@@ -411,8 +411,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--version',
         choices=['3.0', '4.0'],
-        default='3.0',
-        help='vCard version to generate (default: 3.0)'
+        default='4.0',
+        help='vCard version to generate (default: 4.0)'
     )
     parser.add_argument(
         '--ignore-errors',
