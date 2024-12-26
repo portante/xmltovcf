@@ -79,15 +79,43 @@ Pretty print XML files with customizable formatting.
 ```
 
 ### contacttagfreq
-Analyze and report tag frequencies in XML contact files.
+Analyze and report tag frequencies in XML contact files. This tool helps
+understand the structure of contact XML exports by providing detailed analysis
+of tags, their frequencies, attributes, and sample values.
 
 #### Features
-- Counts occurrences of different XML tags
-- Helps understand the structure of contact XML exports
+- Counts and analyzes XML tag usage patterns
+- Multiple output formats (text, CSV, JSON)
+- Sort by frequency or tag name
+- Filter by minimum frequency threshold
+- Optional attribute analysis
+- Sample value collection and statistics
+- Comprehensive error handling
+- Input validation
 
 #### Usage
 ```bash
+# Basic frequency analysis
 ./contacttagfreq contacts.xml
+
+# Sort by tag name instead of frequency
+./contacttagfreq contacts.xml --sort=name
+
+# Show only tags that appear in at least 50% of contacts
+./contacttagfreq contacts.xml --min-freq=50
+
+# Include attribute information
+./contacttagfreq contacts.xml --show-attrs
+
+# Show sample values with custom limit
+./contacttagfreq contacts.xml --show-samples --max-samples=5
+
+# Output as CSV format to a file
+./contacttagfreq contacts.xml --format=csv -o tags.csv
+
+# Comprehensive analysis with all features
+./contacttagfreq contacts.xml --show-attrs --show-samples --format=json \
+    --min-freq=10 --sort=freq -o analysis.json
 ```
 
 ## Requirements

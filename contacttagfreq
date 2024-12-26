@@ -1,40 +1,258 @@
-#!./bin/python3
+#!/usr/bin/env python3
 
-# Generate a table of all the XML tags used across all contacts, sorted by
-# their frequency of occurrance in reverse order.
-#
-# We also perform a bit of validation that the root `elementCount` attribute
-# actually matches the total number of contacts, and that there are ONLY
-# `contact` elements being considered.
-#
-# This kind of introspection of the contact data let's us determine where to
-# focus our efforts for conversion.
+"""
+Analyze XML tag frequencies in contact files.
+
+This script analyzes XML files containing contacts and reports tag frequencies,
+attributes, and value patterns to help understand the data structure.
+"""
+
 from collections import defaultdict
 from lxml import etree
 import operator
 import sys
+import os
+import argparse
+import json
+import csv
+from typing import Dict, List, Set, DefaultDict, Any, Optional
+from io import StringIO
 
-tree = etree.parse(sys.argv[1])
+class TagInfo:
+    """Store information about a tag's usage in the XML."""
+    def __init__(self):
+        self.count = 0
+        self.attributes: DefaultDict[str, Set[str]] = defaultdict(set)
+        self.sample_values: Set[str] = set()
+        self.max_value_length = 0
+        self.has_children = False
 
-root = tree.getroot()
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Analyze XML tag frequencies in contact files'
+    )
+    parser.add_argument(
+        'input_file',
+        help='Input XML file to analyze'
+    )
+    parser.add_argument(
+        '--sort',
+        choices=['freq', 'name'],
+        default='freq',
+        help='Sort by frequency (default) or name'
+    )
+    parser.add_argument(
+        '--min-freq',
+        type=float,
+        default=0.0,
+        help='Minimum frequency percentage to include (0-100)'
+    )
+    parser.add_argument(
+        '--format',
+        choices=['text', 'csv', 'json'],
+        default='text',
+        help='Output format (default: text)'
+    )
+    parser.add_argument(
+        '--show-attrs',
+        action='store_true',
+        help='Show attribute information'
+    )
+    parser.add_argument(
+        '--show-samples',
+        action='store_true',
+        help='Show sample values'
+    )
+    parser.add_argument(
+        '--max-samples',
+        type=int,
+        default=3,
+        help='Maximum number of sample values to show (default: 3)'
+    )
+    parser.add_argument(
+        '--output', '-o',
+        help='Output file (default: stdout)'
+    )
+    return parser.parse_args()
 
-# First very the total number of contacts match the element count
-contacts_n = int(root.attrib['elementCount'])
-root_n = len(root)
-if contacts_n != root_n:
-    print(f"Warning:  XML `elementCount` for contacts, {contacts_n}, does not match number of contacts found, {root_n}", file=sys.stderr)
+def validate_file(filepath: str) -> None:
+    """Validate that the input file exists and is readable."""
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File not found: {filepath}")
+    if not os.path.isfile(filepath):
+        raise ValueError(f"Not a file: {filepath}")
+    if not os.access(filepath, os.R_OK):
+        raise PermissionError(f"File not readable: {filepath}")
 
-contact_tags_d = defaultdict(int)
-contact_n = 0
-for contact in root:
-    if contact.tag != 'contact':
-        print(f"Error:  expecting all `contact` tags, found {contact.tag}, after processing {contact_n} contact(s)", file=sys.stderr)
+def analyze_tag(element: etree.Element, info: TagInfo, max_samples: int) -> None:
+    """Analyze a tag's attributes and content."""
+    info.count += 1
+    
+    # Record attributes
+    for attr, value in element.attrib.items():
+        info.attributes[attr].add(value)
+    
+    # Record sample values if it's a leaf node
+    if len(element) == 0 and element.text:
+        text = element.text.strip()
+        if text:
+            info.max_value_length = max(info.max_value_length, len(text))
+            if len(info.sample_values) < max_samples:
+                info.sample_values.add(text)
+    else:
+        info.has_children = True
+
+def format_text_output(tag_infos: Dict[str, TagInfo], total_contacts: int,
+                      show_attrs: bool, show_samples: bool) -> str:
+    """Format results as text."""
+    output = StringIO()
+    count_width = len(str(total_contacts)) + 1
+    
+    for tag, info in tag_infos.items():
+        freq = (info.count / total_contacts) * 100.0
+        base_info = f"{info.count:{count_width}d} {freq:5.1f}% {tag}"
+        
+        if show_attrs and info.attributes:
+            attrs = [f"{attr}={sorted(values)}" 
+                    for attr, values in info.attributes.items()]
+            base_info += f"\n  Attributes: {', '.join(attrs)}"
+        
+        if show_samples and info.sample_values and not info.has_children:
+            samples = sorted(info.sample_values)
+            base_info += f"\n  Samples: {samples}"
+            if info.max_value_length > 50:
+                base_info += f"\n  Max length: {info.max_value_length}"
+        
+        print(base_info, file=output)
+    
+    return output.getvalue()
+
+def format_csv_output(tag_infos: Dict[str, TagInfo], total_contacts: int,
+                     show_attrs: bool, show_samples: bool) -> str:
+    """Format results as CSV."""
+    output = StringIO()
+    writer = csv.writer(output)
+    headers = ['Tag', 'Count', 'Frequency']
+    if show_attrs:
+        headers.append('Attributes')
+    if show_samples:
+        headers.extend(['Samples', 'Max Length'])
+    writer.writerow(headers)
+    
+    for tag, info in tag_infos.items():
+        freq = (info.count / total_contacts) * 100.0
+        row = [tag, info.count, f"{freq:.1f}%"]
+        if show_attrs:
+            attrs = '; '.join(f"{attr}={sorted(values)}"
+                            for attr, values in info.attributes.items())
+            row.append(attrs)
+        if show_samples:
+            row.append(', '.join(sorted(info.sample_values)))
+            row.append(info.max_value_length if not info.has_children else 'N/A')
+        writer.writerow(row)
+    
+    return output.getvalue()
+
+def format_json_output(tag_infos: Dict[str, TagInfo], total_contacts: int,
+                      show_attrs: bool, show_samples: bool) -> str:
+    """Format results as JSON."""
+    result = {}
+    for tag, info in tag_infos.items():
+        freq = (info.count / total_contacts) * 100.0
+        tag_data = {
+            'count': info.count,
+            'frequency': f"{freq:.1f}%"
+        }
+        if show_attrs:
+            tag_data['attributes'] = {
+                attr: sorted(values)
+                for attr, values in info.attributes.items()
+            }
+        if show_samples and not info.has_children:
+            tag_data['samples'] = sorted(info.sample_values)
+            tag_data['max_length'] = info.max_value_length
+        result[tag] = tag_data
+    
+    return json.dumps(result, indent=2)
+
+def main() -> None:
+    """Main entry point."""
+    try:
+        args = parse_args()
+        validate_file(args.input_file)
+        
+        # Parse XML and get root
+        tree = etree.parse(args.input_file)
+        root = tree.getroot()
+        
+        # Verify contact count
+        contacts_count = int(root.attrib.get('elementCount', 0))
+        actual_count = len(root)
+        if contacts_count != actual_count:
+            print(f"Warning: XML elementCount ({contacts_count}) does not match "
+                  f"number of contacts found ({actual_count})",
+                  file=sys.stderr)
+        
+        # Analyze tags
+        tag_infos: Dict[str, TagInfo] = defaultdict(TagInfo)
+        for i, contact in enumerate(root):
+            if contact.tag != 'contact':
+                print(f"Error: expecting all 'contact' tags, found {contact.tag} "
+                      f"after processing {i} contact(s)",
+                      file=sys.stderr)
+                sys.exit(1)
+            
+            for element in contact:
+                analyze_tag(element, tag_infos[element.tag], args.max_samples)
+        
+        # Filter by minimum frequency if specified
+        if args.min_freq > 0:
+            tag_infos = {
+                tag: info
+                for tag, info in tag_infos.items()
+                if (info.count / actual_count * 100) >= args.min_freq
+            }
+        
+        # Sort results
+        if args.sort == 'freq':
+            sorted_tags = dict(sorted(
+                tag_infos.items(),
+                key=lambda x: (-x[1].count, x[0])
+            ))
+        else:  # sort by name
+            sorted_tags = dict(sorted(tag_infos.items()))
+        
+        # Format output
+        if args.format == 'csv':
+            output = format_csv_output(
+                sorted_tags, actual_count,
+                args.show_attrs, args.show_samples
+            )
+        elif args.format == 'json':
+            output = format_json_output(
+                sorted_tags, actual_count,
+                args.show_attrs, args.show_samples
+            )
+        else:  # text
+            output = format_text_output(
+                sorted_tags, actual_count,
+                args.show_attrs, args.show_samples
+            )
+        
+        # Write output
+        if args.output:
+            with open(args.output, 'w') as f:
+                f.write(output)
+        else:
+            print(output, end='')
+            
+    except etree.XMLSyntaxError as e:
+        print(f"Error parsing XML: {str(e)}", file=sys.stderr)
         sys.exit(1)
-    for el in contact:
-        contact_tags_d[el.tag] += 1
-    contact_n += 1
+    except Exception as e:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        sys.exit(1)
 
-count_w = len(str(root_n)) + 1
-for tag, count in sorted(contact_tags_d.items(), key=operator.itemgetter(1), reverse=True):
-    freq = (count / root_n) * 100.0
-    print(f"{count:{count_w}d} {freq:5.1f}% {tag}")
+if __name__ == '__main__':
+    main()
