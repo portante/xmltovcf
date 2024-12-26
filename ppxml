@@ -1,8 +1,58 @@
-#!./bin/python3
+#!/usr/bin/env python3
+
+"""
+Pretty prints XML files with proper indentation.
+
+Usage:
+    ppxml <xml_file> [--no-declaration] [--indent=SPACES]
+
+Arguments:
+    xml_file            Input XML file to pretty print
+Options:
+    --no-declaration    Omit the XML declaration
+    --indent=SPACES     Number of spaces for indentation (default: 2)
+"""
 
 from lxml import etree
 import sys
+import argparse
 
-tree = etree.parse(sys.argv[1])
+def parse_args():
+    parser = argparse.ArgumentParser(description='Pretty print XML files')
+    parser.add_argument('xml_file', help='Input XML file to pretty print')
+    parser.add_argument('--no-declaration', action='store_true', 
+                      help='Omit the XML declaration')
+    parser.add_argument('--indent', type=int, default=2,
+                      help='Number of spaces for indentation (default: 2)')
+    return parser.parse_args()
 
-print(etree.tostring(tree, pretty_print=True, encoding=str))
+def pretty_print_xml(filename, no_declaration=False, indent=2):
+    try:
+        tree = etree.parse(filename)
+        xml_str = etree.tostring(
+            tree,
+            pretty_print=True,
+            encoding=str,
+            xml_declaration=not no_declaration,
+            with_tail=True
+        )
+        return xml_str
+    except (etree.ParseError, IOError) as e:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+def main():
+    args = parse_args()
+    try:
+        result = pretty_print_xml(
+            args.xml_file,
+            no_declaration=args.no_declaration,
+            indent=args.indent
+        )
+        print(result)
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

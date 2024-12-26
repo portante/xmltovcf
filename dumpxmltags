@@ -1,27 +1,115 @@
-#!./bin/python3
+#!/usr/bin/env python3
 
-# Dump the XML tags for all contacts.  Use with `<prog> | sort | uniq` to
-# generate a combined list of all the tags across all contacts.
+"""
+Extract and list XML tags from a contacts file.
+
+Usage:
+    dumpxmltags <xml_file> [--with-attrs] [--recursive]
+
+Arguments:
+    xml_file        Input XML contacts file
+Options:
+    --with-attrs    Include attributes in the output
+    --recursive     Recursively process nested elements
+"""
+
+from typing import Set, Optional
 from lxml import etree
 import sys
+import argparse
 
-space_s = "{http://www.w3.org/XML/1998/namespace}space"
+XML_SPACE_NS = "{http://www.w3.org/XML/1998/namespace}space"
 
-tree = etree.parse(sys.argv[1])
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description='Extract XML tags from contacts file')
+    parser.add_argument('xml_file', help='Input XML contacts file')
+    parser.add_argument('--with-attrs', action='store_true',
+                      help='Include attributes in the output')
+    parser.add_argument('--recursive', action='store_true',
+                      help='Recursively process nested elements')
+    return parser.parse_args()
 
-root = tree.getroot()
+def extract_tags(element: etree._Element, with_attrs: bool = False, 
+                recursive: bool = False, tags: Optional[Set[str]] = None) -> Set[str]:
+    """
+    Extract tags from an XML element recursively.
+    
+    Args:
+        element: The XML element to process
+        with_attrs: Whether to include attributes
+        recursive: Whether to process nested elements
+        tags: Set to store unique tags
+        
+    Returns:
+        Set of unique tags found
+    """
+    if tags is None:
+        tags = set()
+    
+    # Add the current tag
+    if element.tag != 'contact':  # Skip the contact wrapper tag
+        tags.add(element.tag)
+        
+    # Add attributes if requested
+    if with_attrs and element.attrib:
+        attrs = element.attrib.copy()
+        if XML_SPACE_NS in attrs:
+            del attrs[XML_SPACE_NS]
+        for attr in attrs:
+            tags.add(f"{element.tag}[@{attr}]")
+    
+    # Process children if recursive
+    if recursive:
+        for child in element:
+            extract_tags(child, with_attrs, recursive, tags)
+            
+    return tags
 
-# First very the total number of contacts match the element count
-contacts_n = int(root.attrib['elementCount'])
-root_n = len(root)
-if contacts_n != root_n:
-    print(f"Warning:  XML `elementCount` for contacts, {contacts_n}, does not match number of contacts found, {root_n}", fp=sys.stderr)
+def process_contacts_file(filename: str, with_attrs: bool = False, 
+                        recursive: bool = False) -> None:
+    """Process the contacts XML file and extract tags."""
+    try:
+        tree = etree.parse(filename)
+        root = tree.getroot()
+        
+        # Verify contact count
+        contacts_n = int(root.attrib.get('elementCount', 0))
+        root_n = len(root)
+        if contacts_n != root_n:
+            print(f"Warning: XML 'elementCount' ({contacts_n}) does not match "
+                  f"number of contacts found ({root_n})", file=sys.stderr)
+        
+        # Process each contact
+        all_tags = set()
+        for contact in root:
+            if XML_SPACE_NS in contact.attrib:
+                del contact.attrib[XML_SPACE_NS]
+                
+            for el in contact:
+                if XML_SPACE_NS in el.attrib:
+                    del el.attrib[XML_SPACE_NS]
+                tags = extract_tags(el, with_attrs, recursive)
+                all_tags.update(tags)
+        
+        # Output sorted tags
+        for tag in sorted(all_tags):
+            print(tag)
+            
+    except etree.ParseError as e:
+        print(f"Error parsing XML file: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+    except (IOError, KeyError) as e:
+        print(f"Error processing file: {str(e)}", file=sys.stderr)
+        sys.exit(1)
 
-for contact in root:
-    del contact.attrib[space_s]
-    assert len(contact.attrib) == 0
-    assert contact.tag == 'contact'
-    for el in contact:
-        del el.attrib[space_s]
-        assert len(el.attrib) == 0
-        print(el.tag)
+def main() -> None:
+    """Main entry point."""
+    args = parse_args()
+    try:
+        process_contacts_file(args.xml_file, args.with_attrs, args.recursive)
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
