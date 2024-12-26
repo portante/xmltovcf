@@ -1,481 +1,529 @@
-#!./bin/python3
+#!/usr/bin/env python3
 
-# Based on https://www.datacamp.com/tutorial/python-xml-elementtree
+"""
+Convert Microsoft Office XML contacts to vCard format.
+
+This script converts contact information from Microsoft Office XML format to
+the standard vCard format. It handles various contact fields including names,
+addresses, phone numbers, email addresses, and more.
+
+The script is specifically designed for Microsoft Office contact XML format
+and may not work with other XML contact formats.
+
+Usage:
+    xmltovcf contacts.xml > contacts.vcf
+    xmltovcf --version=4.0 contacts.xml -o contacts.vcf
+"""
 
 from lxml import etree
 import sys
+import os
+import argparse
+import logging
 import vobject
+from typing import Dict, List, Optional, Set, Any
 
-space_s = "{http://www.w3.org/XML/1998/namespace}space"
+# Constants
+XML_SPACE_NS = "{http://www.w3.org/XML/1998/namespace}space"
+EMAIL_TYPE_MAP = {'0': 'work', '1': 'home', '2': 'other'}
 
-# Create the Element Tree object for the XML file
-tree = etree.parse(sys.argv[1])
+class ContactError(Exception):
+    """Base exception for contact processing errors."""
+    pass
 
-# Start at the root of the tree.
-root = tree.getroot()
+class Contact:
+    """Represents a single contact with all its data."""
+    def __init__(self, element: etree.Element):
+        self.element = element
+        self.data: Dict[str, Any] = {
+            'name': {},
+            'addresses': {},
+            'phones': [],
+            'emails': [],
+            'urls': [],
+            'organization': [],
+            'categories': [],
+            'related': []
+        }
+        self.errors: List[str] = []
 
-ignored_tags = frozenset((
-    'OPFContactCanDelete',
-    'OPFContactCanEdit',
-    'OPFContactCopyAge',
-    'OPFContactCopyBusinessAlias',
-    'OPFContactCopyCompletedDateTime',
-    'OPFContactCopyContactImage',
-    'OPFContactCopyCustom3Data',
-    'OPFContactCopyCustomPhone3',
-    'OPFContactCopyDueDateTime',
-    'OPFContactCopyFuriganaChildrensNames',
-    'OPFContactCopyInterests',
-    'OPFContactCopyModDate',
-    'OPFContactCopyNotes',
-    'OPFContactCopyPager',
-    'OPFContactCopyStartDateTime',
-    'OPFContactGetFlagStatus',
-    'OPFContactIsJapaneseContact',
-    'OPFContactType',
-    ))
+    def parse(self) -> None:
+        """Parse all fields from the contact element."""
+        try:
+            # Clean up XML space attributes
+            if XML_SPACE_NS in self.element.attrib:
+                del self.element.attrib[XML_SPACE_NS]
 
-# Expected contact tags
-handled_tags_d = {
-    'OPFContactCanDelete': 0,			# Ignore
-    'OPFContactCanEdit': 0,			# Ignore
-    'OPFContactCopyAge': 0,			# Ignore
-    'OPFContactCopyBusinessAlias': 0,		# Ignore
-    'OPFContactCopyCompletedDateTime': 0,	# Ignore
-    'OPFContactCopyContactImage': 0,		# Ignore
-    'OPFContactCopyCustom3Data': 0,		# Ignore
-    'OPFContactCopyCustomPhone3': 0,		# Ignore
-    'OPFContactCopyDueDateTime': 0,		# Ignore
-    'OPFContactCopyFuriganaChildrensNames': 0,	# Ignore
-    'OPFContactCopyInterests': 0,		# Ignore
-    'OPFContactCopyModDate': 0,			# Ignore
-    'OPFContactCopyNotes': 0,			# Ignore (maybe BeautifulSoup?)
-    'OPFContactCopyPager': 0,			# Ignore
-    'OPFContactCopyStartDateTime': 0,		# Ignore
-    'OPFContactGetFlagStatus': 0,		# Ignore
-    'OPFContactIsJapaneseContact': 0,		# Ignore
-    'OPFContactType': 0,			# Ignore
+            # Process each element
+            for el in self.element:
+                if XML_SPACE_NS in el.attrib:
+                    del el.attrib[XML_SPACE_NS]
+                self._process_element(el)
 
-    'OPFContactCopyDisplayName': 0,		# Map to 'FN'
+        except Exception as e:
+            self.errors.append(f"Error parsing contact: {str(e)}")
 
-    'OPFContactCopyTitle': 0,			# Christmas Card Name
-                                                #   - typically this would be mapped to 'N'->'prefix'
-                                                #
-                                                #  X-ABRELATEDNAMES;type=pref:<value-text>
-                                                #  X-ABLabel:Christmas Card Name
+    def _process_element(self, element: etree.Element) -> None:
+        """Process a single contact element."""
+        try:
+            if element.tag == 'OPFContactCopyDisplayName' and element.text:
+                self.data['name']['display'] = element.text
+            elif element.tag == 'OPFContactCopyFirstName' and element.text:
+                self.data['name']['given'] = element.text
+            elif element.tag == 'OPFContactCopyLastName' and element.text:
+                self.data['name']['family'] = element.text
+            elif element.tag == 'OPFContactCopyMiddleName' and element.text:
+                self.data['name']['additional'] = element.text
+            elif element.tag == 'OPFContactCopySetNameSuffix' and element.text:
+                self.data['name']['suffix'] = element.text
+            elif element.tag == 'OPFContactCopyTitle' and element.text:
+                self.data['name']['christmas_card'] = element.text
+            elif self._is_address_field(element):
+                self._process_address(element)
+            elif self._is_phone_field(element):
+                self._process_phone(element)
+            elif self._is_email_field(element):
+                self._process_email(element)
+            elif self._is_url_field(element):
+                self._process_url(element)
+            elif self._is_organization_field(element):
+                self._process_organization(element)
+            elif element.tag == 'OPFContactCopyNotesPlain' and element.text:
+                self.data['note'] = element.text.strip()
+            elif element.tag in ('OPFContactCopyPrimaryCategory', 'OPFContactCopyCategoryList'):
+                self._process_categories(element)
 
-    'OPFContactCopyFirstName': 0,		# Map to 'N'->'given'
-    'OPFContactCopyLastName': 0,		# Map to 'N'->'family'
-    'OPFContactCopyMiddleName': 0,		# Map to 'N'->'additional'
-    'OPFContactCopySetNameSuffix': 0,		# Map to 'N'->'suffix'
+        except Exception as e:
+            self.errors.append(f"Error processing element {element.tag}: {str(e)}")
 
-    'OPFContactCopyNickName': 0,		# Map to 'NICKNAME'
+    def _is_address_field(self, element: etree.Element) -> bool:
+        """Check if element is an address-related field."""
+        return any(element.tag.startswith(prefix) for prefix in (
+            'OPFContactCopyHome', 'OPFContactCopyBusiness', 'OPFContactCopyOther'
+        )) and any(element.tag.endswith(suffix) for suffix in (
+            'StreetAddress', 'City', 'State', 'Zip', 'Country'
+        ))
 
-    'OPFContactCopyHomeStreetAddress': 0,	# Map to 'ADR;type=HOME;type=pref:<pobox>;<extended>;<street>;<city>;<region/state>;<code/zip>;<country>'
-    'OPFContactCopyHomeCity': 0,
-    'OPFContactCopyHomeState': 0,
-    'OPFContactCopyHomeZip': 0,
-    'OPFContactCopyHomeCountry': 0,
+    def _process_address(self, element: etree.Element) -> None:
+        """Process an address field."""
+        if 'Home' in element.tag:
+            addr_type = 'home'
+        elif 'Business' in element.tag:
+            addr_type = 'work'
+        else:
+            addr_type = 'other'
 
-    'OPFContactCopyBusinessStreetAddress': 0,	# Map to 'ADR;type=WORK;type=pref:<pobox>;<extended>;<street>;<city>;<region/state>;<code/zip>;<country>'
-    'OPFContactCopyBusinessCity': 0,
-    'OPFContactCopyBusinessState': 0,
-    'OPFContactCopyBusinessZip': 0,
-    'OPFContactCopyBusinessCountry': 0,
+        if addr_type not in self.data['addresses']:
+            self.data['addresses'][addr_type] = {}
 
-    'OPFContactCopyOtherStreetAddress': 0,      # Map to 'ADR;type=OTHER:<pobox>;<extended>;<street>;<city>;<region/state>;<code/zip>;<country>'
-    'OPFContactCopyOtherCity': 0,
-    'OPFContactCopyOtherState': 0,
-    'OPFContactCopyOtherZip': 0,
+        addr = self.data['addresses'][addr_type]
+        if 'StreetAddress' in element.tag:
+            addr['street'] = element.text
+        elif 'City' in element.tag:
+            addr['city'] = element.text
+        elif 'State' in element.tag:
+            addr['region'] = element.text
+        elif 'Zip' in element.tag:
+            addr['code'] = element.text
+        elif 'Country' in element.tag:
+            addr['country'] = element.text
 
-    'OPFContactCopyHomeFax': 0,			# Map to 'TEL;type=HOME;type=FAX:<value-text>'
-    'OPFContactCopyHomePhone': 0,		# Map to 'TEL;type=HOME;type=VOICE;type=pref:<value-text>'
-    'OPFContactCopyHomePhone2': 0,		# Map to 'TEL;type=HOME;type=VOICE:<value-text>'
-    'OPFContactCopyCellPhone': 0,		# Map to 'TEL;type=CELL;type=VOICE:<value-text>'
+    def _is_phone_field(self, element: etree.Element) -> bool:
+        """Check if element is a phone-related field."""
+        return any(phone_type in element.tag for phone_type in (
+            'Phone', 'Fax', 'CellPhone'
+        ))
 
-    'OPFContactCopyBusinessFax': 0,		# Map to 'TEL;type=WORK;type=FAX:<value-text>'
-    'OPFContactCopyBusinessPhone': 0,		# Map to 'TEL;type=WORK;type=VOICE;type=pref:<value-text>'
-    'OPFContactCopyBusinessPhone2': 0,		# Map to 'TEL;type=WORK;type=VOICE:<value-text>'
+    def _process_phone(self, element: etree.Element) -> None:
+        """Process a phone field."""
+        if not element.text:
+            return
 
-    'OPFContactCopyCustomPhone1': 0,		# Map to 'TEL;type=OTHER;type=VOICE:<value-text>'
+        phone_info = {
+            'value': element.text,
+            'types': []
+        }
 
-    'OPFContactCopyBusinessTitle': 0,		# Map to 'TITLE'
+        if 'Home' in element.tag:
+            phone_info['types'].append('home')
+        elif 'Business' in element.tag:
+            phone_info['types'].append('work')
+        elif 'Cell' in element.tag:
+            phone_info['types'].append('cell')
 
-    'OPFContactCopyBusinessDepartment': 0,	# Map to 'ORG:<company>;<office>;<department>'
-    'OPFContactCopyBusinessCompany': 0,
-    'OPFContactCopyBusinessOffice': 0,
+        if 'Fax' in element.tag:
+            phone_info['types'].append('fax')
+        else:
+            phone_info['types'].append('voice')
 
-    'OPFContactCopyHomeWebPage': 0,		# Map to 'URL;type=HOME:...'
+        self.data['phones'].append(phone_info)
 
-    'OPFContactCopyBusinessHomePage': 0,	# Map to 'URL;type=WORK:...'
+    def _is_email_field(self, element: etree.Element) -> bool:
+        """Check if element is an email-related field."""
+        return element.tag in (
+            'OPFContactCopyDefaultEmailAddress',
+            'OPFContactCopyEmailAddressList',
+            'OPFContactCopyEmailAddressList1',
+            'OPFContactCopyEmailAddressList2'
+        )
 
-    'OPFContactCopyAnniversary': 0,		# Map to 'ANNIVERSARY'
-    'OPFContactCopyBirthday': 0,		# Map to 'BDAY'
+    def _process_email(self, element: etree.Element) -> None:
+        """Process email fields."""
+        for child in element:
+            email = child.attrib.get('OPFContactEmailAddressAddress')
+            if not email:
+                continue
 
-    'OPFContactCopySpousesName': 0,		# Map to 'RELATED;type=SPOUSE:<value-text>'
-    'OPFContactCustomData7': 0,			# Map to 'RELATED;type=MAIDENNAME:<value-text>'
-    'OPFContactCopyChildren': 0,		# Map to 'RELATED;type=CHILD:<value-text>'
+            email_type = child.attrib.get('OPFContactEmailAddressType', '0')
+            is_primary = child.attrib.get('OPFContactEmailAddressIsDefault', '0') == '1'
 
-    'OPFContactCopyNotesPlain': 0,		# Map to 'NOTE'
+            # Check if this email already exists
+            existing = next((e for e in self.data['emails'] if e['value'] == email), None)
+            if existing:
+                # Verify consistency
+                if (existing['type'] != EMAIL_TYPE_MAP[email_type] or
+                    existing['primary'] != is_primary):
+                    self.errors.append(
+                        f"Inconsistent email attributes for {email}"
+                    )
+                continue
 
-    'OPFContactCopyDefaultEmailAddress': 0,	# Map to 'EMAIL;type=pref:<value-text>'
-    'OPFContactCopyEmailAddressList': 0,
-    'OPFContactCopyEmailAddressList1': 0,
-    'OPFContactCopyEmailAddressList2': 0,
+            self.data['emails'].append({
+                'value': email,
+                'type': EMAIL_TYPE_MAP[email_type],
+                'primary': is_primary
+            })
 
-    'OPFContactCopyPrimaryCategory': 0,		# Map to 'CATEGORIES;type=pref:...'
-    'OPFContactCopyCategoryList': 0,		# Map to 'CATEGORIES:...'
-}
+    def _is_url_field(self, element: etree.Element) -> bool:
+        """Check if element is a URL-related field."""
+        return element.tag in (
+            'OPFContactCopyHomeWebPage',
+            'OPFContactCopyBusinessHomePage'
+        )
 
-# Email "type" mapping
-email_type_map_d = { '0': 'work', '1': 'home', '2': 'other' }
+    def _process_url(self, element: etree.Element) -> None:
+        """Process a URL field."""
+        if not element.text:
+            return
 
-# First very the total number of contacts match the element count
-contacts_n = int(root.attrib['elementCount'])
-root_n = len(root)
-if contacts_n != root_n:
-    print(f"Warning:  XML `elementCount` for contacts, {contacts_n}, does not match number of contacts found, {root_n}", file=sys.stderr)
-contact_n = 0
+        url_type = 'home' if 'Home' in element.tag else 'work'
+        self.data['urls'].append({
+            'value': element.text,
+            'type': url_type
+        })
 
-# Build up a list of existing, and expected, contact tags.  We are expecting
-# only `contact` tags off the root, so issue an error and exit if any are
-# encountered.  If any contact has tags we don't have in our "handled tags"
-# table, flag it and exit.  Most of the XML elements emitted by Microsoft
-# Office contain the "preserve space" attribute, which we conveniently remove
-# along the way while also checking that there are no other attributes on the
-# top-level contact elements.
-contact_id = 0
-for contact in root:
-    if contact.tag != 'contact':
-        print(f"Error:  expecting all `contact` tags, found {contact.tag}, after processing {contact_id} contact(s)", file=sys.stderr)
-        sys.exit(1)
-    contact_id += 1
-    del contact.attrib[space_s]
-    if len(contact.attrib) != 0:
-        print(f"Error: contact #{contact_id:d} has unexpected attributes: '{contact.attrib}'", file=sys.stderr)
-        sys.exit(1)
-    for el in contact:
-        del el.attrib[space_s]
-        if len(el.attrib) != 0:
-            print(f"Error: contact #{contact_id:d} has unexpected attributes on element with tag '{el.tag}': '{el.attrib}'", file=sys.stderr)
-            sys.exit(1)
-        if el.tag not in handled_tags_d:
-            print(f"Error: contact #{contact_id:d} has an unexpected tag, '{el.tag}': '{el.text}'", file=sys.stderr)
-            sys.exit(1)
-        handled_tags_d[el.tag] += 1
+    def _is_organization_field(self, element: etree.Element) -> bool:
+        """Check if element is an organization-related field."""
+        return element.tag in (
+            'OPFContactCopyBusinessDepartment',
+            'OPFContactCopyBusinessCompany',
+            'OPFContactCopyBusinessOffice',
+            'OPFContactCopyBusinessTitle'
+        )
 
-def hom_adr(ha, vcard):
-    if ha is not None:
-        return ha
-    ha = vobject.vcard.Address()
-    adr = vcard.add('adr')
-    adr.value = ha
-    adr.type_param = ['home', 'pref']
-    return ha
+    def _process_organization(self, element: etree.Element) -> None:
+        """Process an organization field."""
+        if not element.text:
+            return
 
-def bus_adr(ba, vcard):
-    if ba is not None:
-        return ba
-    ba = vobject.vcard.Address()
-    adr = vcard.add('adr')
-    adr.value = ba
-    adr.type_param = 'work'
-    return ba
+        if element.tag == 'OPFContactCopyBusinessTitle':
+            self.data['title'] = element.text
+        else:
+            self.data['organization'].append(element.text.strip())
 
-def oth_adr(oa, vcard):
-    if oa is not None:
-        return oa
-    oa = vobject.vcard.Address()
-    adr = vcard.add('adr')
-    adr.value = oa
-    adr.type_param = 'other'
-    return oa
+    def _process_categories(self, element: etree.Element) -> None:
+        """Process category fields."""
+        if element.tag == 'OPFContactCopyPrimaryCategory':
+            for child in element:
+                if child.tag == 'OPFCategoryCopyName' and child.text:
+                    self.data['categories'].append({
+                        'value': child.text,
+                        'primary': True
+                    })
+        else:  # OPFContactCopyCategoryList
+            for child in element:
+                if (child.tag == 'category' and
+                    'OPFCategoryCopyName' in child.attrib):
+                    self.data['categories'].append({
+                        'value': child.attrib['OPFCategoryCopyName'],
+                        'primary': False
+                    })
 
-# Now that we have verified that all the tags in the list of contacts are
-# handled we can begin building the vCards.
+    def is_empty(self) -> bool:
+        """Check if contact has any useful data."""
+        return not any(
+            value for value in self.data.values()
+            if value and (not isinstance(value, dict) or any(value.values()))
+        )
 
-contact_id = 0
-for contact in root:
-    contact_id += 1
-    # Create a vCard and add the required "N" and "FN" fields.  These are going
-    # to be filled in as we process the contact tags.
-    vcard = vobject.vCard()
-    fn = vcard.add('fn')
-    n = vcard.add('n')
-    name = vobject.vcard.Name()
-    n.value = name
-    ha = ba = oa = None
-    company = office = department = ''
-    email_d = {}
-    for el in contact:
-        if el.tag in ignored_tags:
-            # Skip any ignored tags first
-            continue
-        if el.tag == 'OPFContactCopyDisplayName' and el.text is not None:
-            fn.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyFirstName' and el.text is not None:
-            # Map to 'N'->'given'
-            name.given = el.text
-            continue
-        if el.tag == 'OPFContactCopyLastName' and el.text is not None:
-            # Map to 'N'->'family'
-            name.family = el.text
-            continue
-        if el.tag == 'OPFContactCopyMiddleName' and el.text is not None:
-            # Map to 'N'->'additional'
-            name.additional = el.text
-            continue
-        if el.tag == 'OPFContactCopySetNameSuffix' and el.text is not None:
-            # Map to 'N'->'suffix'
-            name.suffix = el.text
-            continue
-        if el.tag == 'OPFContactCopyNickName' and el.text is not None:
-            # Map to 'NICKNAME'
-            nn = vcard.add('NICKNAME')
-            nn.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyTitle' and el.text is not None:
-            if 0:
-                # Typically this would be mapped to 'N'->'prefix'
-                n.prefix = el.text
-            else:
-                # ... but, I had hijacked that name for Christmas card label name
-                #  X-ABRELATEDNAMES;type=pref:<value-text>
+    def to_vcard(self, version: str = '3.0') -> vobject.vCard:
+        """Convert contact data to vCard format."""
+        vcard = vobject.vCard()
+        try:
+            # Add version
+            vcard.add('version').value = version
+
+            # Add name fields
+            self._add_names(vcard)
+            
+            # Add addresses
+            self._add_addresses(vcard)
+            
+            # Add phones
+            self._add_phones(vcard)
+            
+            # Add emails
+            self._add_emails(vcard)
+            
+            # Add URLs
+            self._add_urls(vcard)
+            
+            # Add organization info
+            self._add_organization(vcard)
+            
+            # Add categories
+            self._add_categories(vcard)
+            
+            # Add note
+            if 'note' in self.data:
+                vcard.add('note').value = self.data['note']
+
+            # Add Christmas card name if present
+            if 'christmas_card' in self.data['name']:
                 cc = vcard.add('X-ABRELATEDNAMES')
                 cc.type_param = 'pref'
-                cc.value = el.text
-                #  X-ABLabel:Christmas Card Name
+                cc.value = self.data['name']['christmas_card']
                 cl = vcard.add('X-ABLabel')
                 cl.value = 'Christmas Card Name'
-            continue
-        if el.tag == 'OPFContactCopyHomeStreetAddress' and el.text is not None:
-            # Map to 'ADR;type=HOME;type=pref:;;\n5081 Glen Canyon Dr;Virginia Beach;VA;23462;'
-            ha = hom_adr(ha, vcard)
-            ha.street = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomeCity' and el.text is not None:
-            ha = hom_adr(ha, vcard)
-            ha.city = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomeState' and el.text is not None:
-            ha = hom_adr(ha, vcard)
-            ha.region = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomeZip' and el.text is not None:
-            ha = hom_adr(ha, vcard)
-            ha.code = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomeCountry' and el.text is not None:
-            ha = hom_adr(ha, vcard)
-            ha.country = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessStreetAddress' and el.text is not None:
-            # Map to 'ADR;type=WORK;type=pref:;;438 King St;Littleton;MA;01460;USA'
-            ba = bus_adr(ba, vcard)
-            ba.street = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessCity' and el.text is not None:
-            ba = bus_adr(ba, vcard)
-            ba.city = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessState' and el.text is not None:
-            ba = bus_adr(ba, vcard)
-            ba.region = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessZip' and el.text is not None:
-            ba = bus_adr(ba, vcard)
-            ba.code = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessCountry' and el.text is not None:
-            ba = bus_adr(ba, vcard)
-            ba.country = el.text
-            continue
-        if el.tag == 'OPFContactCopyOtherStreetAddress' and el.text is not None:
-            # Map to 'ADR;type=OTHER:;;86 Crestwood Drive;Northborough;MA;01532-1831;'
-            oa = oth_adr(oa, vcard)
-            oa.street = el.text
-            continue
-        if el.tag == 'OPFContactCopyOtherCity' and el.text is not None:
-            oa = oth_adr(oa, vcard)
-            oa.city = el.text
-            continue
-        if el.tag == 'OPFContactCopyOtherState' and el.text is not None:
-            oa = oth_adr(oa, vcard)
-            oa.region = el.text
-            continue
-        if el.tag == 'OPFContactCopyOtherZip' and el.text is not None:
-            oa = oth_adr(oa, vcard)
-            oa.code = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomeFax' and el.text is not None:
-            # Map to 'TEL;type=HOME;type=FAX:603.579.0716'
+
+        except Exception as e:
+            self.errors.append(f"Error creating vCard: {str(e)}")
+
+        return vcard
+
+    def _add_names(self, vcard: vobject.vCard) -> None:
+        """Add name-related fields to vCard."""
+        # Add formatted name (required)
+        fn = vcard.add('fn')
+        if 'display' in self.data['name']:
+            fn.value = self.data['name']['display']
+        else:
+            # Construct from parts
+            parts = []
+            if 'given' in self.data['name']:
+                parts.append(self.data['name']['given'])
+            if 'additional' in self.data['name']:
+                parts.append(self.data['name']['additional'])
+            if 'family' in self.data['name']:
+                parts.append(self.data['name']['family'])
+            fn.value = ' '.join(parts) if parts else 'Unknown'
+
+        # Add structured name
+        n = vcard.add('n')
+        name = vobject.vcard.Name()
+        name.family = self.data['name'].get('family', '')
+        name.given = self.data['name'].get('given', '')
+        name.additional = self.data['name'].get('additional', '')
+        name.suffix = self.data['name'].get('suffix', '')
+        n.value = name
+
+    def _add_addresses(self, vcard: vobject.vCard) -> None:
+        """Add addresses to vCard."""
+        for addr_type, addr_data in self.data['addresses'].items():
+            if not any(addr_data.values()):
+                continue
+
+            addr = vobject.vcard.Address()
+            adr = vcard.add('adr')
+            adr.value = addr
+
+            # Set address components
+            addr.street = addr_data.get('street', '')
+            addr.city = addr_data.get('city', '')
+            addr.region = addr_data.get('region', '')
+            addr.code = addr_data.get('code', '')
+            addr.country = addr_data.get('country', '')
+
+            # Set type
+            if addr_type == 'home':
+                adr.type_param = ['home', 'pref']
+            else:
+                adr.type_param = addr_type
+
+    def _add_phones(self, vcard: vobject.vCard) -> None:
+        """Add phone numbers to vCard."""
+        for phone in self.data['phones']:
             tel = vcard.add('tel')
-            tel.type_param = ['home', 'fax']
-            tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomePhone' and el.text is not None:
-            # Map to 'TEL;type=HOME;type=VOICE;type=pref:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['home', 'voice']
-            tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomePhone2' and el.text is not None:
-            # Map to 'TEL;type=HOME;type=VOICE:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['home2', 'voice']
-            tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyCellPhone' and el.text is not None:
-            # Map to 'TEL;type=CELL;type=VOICE:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['cell', 'voice']
-            tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessFax' and el.text is not None:
-            # Map to 'TEL;type=WORK;type=FAX:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['work', 'fax']
-            tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessPhone' and el.text is not None:
-            # Map to 'TEL;type=WORK;type=VOICE;type=pref:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['work', 'voice']
-            tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessPhone2' and el.text is not None:
-            # Map to 'TEL;type=WORK;type=VOICE:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['work2', 'voice']
-            tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyCustomPhone1' and el.text is not None:
-            # Map to 'TEL;type=OTHER;type=VOICE:<value.text>'
-            tel = vcard.add('tel')
-            tel.type_param = ['other', 'voice']
-            tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessTitle' and el.text is not None:
-            # Map to 'TITLE'
-            vcard.add('title').value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessDepartment':
-            # Map to 'ORG:<company>;<office>;<department>', but just get the
-            # values here, assemble after read all contact tags.
-            department = el.text.strip()
-            continue
-        if el.tag == 'OPFContactCopyBusinessCompany':
-            # Map to 'ORG:<company>;<office>;<department>', but just get the
-            # values here, assemble after read all contact tags.
-            company = el.text.strip()
-            continue
-        if el.tag == 'OPFContactCopyBusinessOffice':
-            # Map to 'ORG:<company>;<office>;<department>', but just get the
-            # values here, assemble after read all contact tags.
-            office = el.text.strip()
-            continue
-        if el.tag == 'OPFContactCopyHomeWebPage' and el.text is not None:
-            # Map to 'URL;type=HOME:...'
+            tel.value = phone['value']
+            tel.type_param = phone['types']
+
+    def _add_emails(self, vcard: vobject.vCard) -> None:
+        """Add email addresses to vCard."""
+        for email in self.data['emails']:
+            email_field = vcard.add('email')
+            email_field.value = email['value']
+            types = [email['type']]
+            if email['primary']:
+                types.append('pref')
+            email_field.type_param = types
+
+    def _add_urls(self, vcard: vobject.vCard) -> None:
+        """Add URLs to vCard."""
+        for url_data in self.data['urls']:
             url = vcard.add('url')
-            url.type_param = 'home'
-            url.value = el.text
+            url.value = url_data['value']
+            url.type_param = url_data['type']
+
+    def _add_organization(self, vcard: vobject.vCard) -> None:
+        """Add organization information to vCard."""
+        if self.data['organization']:
+            vcard.add('org').value = self.data['organization']
+        if 'title' in self.data:
+            vcard.add('title').value = self.data['title']
+
+    def _add_categories(self, vcard: vobject.vCard) -> None:
+        """Add categories to vCard."""
+        primary_cats = [c['value'] for c in self.data['categories'] if c['primary']]
+        other_cats = [c['value'] for c in self.data['categories'] if not c['primary']]
+
+        if primary_cats:
+            cats = vcard.add('categories')
+            cats.value = primary_cats
+            cats.type_param = 'pref'
+
+        if other_cats:
+            cats = vcard.add('categories')
+            cats.value = other_cats
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Convert Microsoft Office XML contacts to vCard format'
+    )
+    parser.add_argument(
+        'input_file',
+        help='Input XML contact file'
+    )
+    parser.add_argument(
+        '--output', '-o',
+        help='Output vCard file (default: stdout)'
+    )
+    parser.add_argument(
+        '--version',
+        choices=['3.0', '4.0'],
+        default='3.0',
+        help='vCard version to generate (default: 3.0)'
+    )
+    parser.add_argument(
+        '--ignore-errors',
+        action='store_true',
+        help='Continue processing on errors'
+    )
+    parser.add_argument(
+        '--skip-empty',
+        action='store_true',
+        help='Skip contacts with no useful data'
+    )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Print debug information'
+    )
+    return parser.parse_args()
+
+def setup_logging(debug: bool = False) -> None:
+    """Configure logging system."""
+    level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format='%(levelname)s: %(message)s'
+    )
+
+def validate_xml_file(filepath: str) -> None:
+    """Validate that the XML file exists and is readable."""
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File not found: {filepath}")
+    if not os.path.isfile(filepath):
+        raise ValueError(f"Not a file: {filepath}")
+    if not os.access(filepath, os.R_OK):
+        raise PermissionError(f"File not readable: {filepath}")
+
+def validate_contact_xml(root: etree.Element) -> None:
+    """Validate that the XML has the expected structure."""
+    if root.tag != 'contacts':
+        raise ValueError(f"Expected root tag 'contacts', found '{root.tag}'")
+    for contact in root:
+        if contact.tag != 'contact':
+            raise ValueError(f"Expected 'contact' tag, found '{contact.tag}'")
+
+def process_contacts(root: etree.Element, args: argparse.Namespace):
+    """Process all contacts with progress reporting."""
+    total = len(root)
+    processed = 0
+    errors = 0
+    skipped = 0
+    
+    for contact_elem in root:
+        processed += 1
+        if processed % 10 == 0:
+            logging.info(f"Processing contact {processed}/{total}")
+        
+        contact = Contact(contact_elem)
+        contact.parse()
+        
+        if contact.errors and not args.ignore_errors:
+            errors += 1
+            for error in contact.errors:
+                logging.error(f"Contact {processed}: {error}")
             continue
-        if el.tag == 'OPFContactCopyBusinessHomePage' and el.text is not None:
-            # Map to 'URL;type=WORK:...'
-            url = vcard.add('url')
-            url.type_param = 'work'
-            url.value = el.text
+            
+        if args.skip_empty and contact.is_empty():
+            skipped += 1
+            logging.debug(f"Skipping empty contact {processed}")
             continue
-        if el.tag == 'OPFContactCopyAnniversary' and el.text is not None:
-            # Map to 'ANNIVERSARY'
-            ann = vcard.add('anniversary')
-            ann.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBirthday' and el.text is not None:
-            # Map to 'BDAY'
-            bd = vcard.add('bday')
-            bd.value = el.text
-            continue
-        if el.tag == 'OPFContactCopySpousesName' and el.text is not None:
-            # Map to 'RELATED;type=SPOUSE:<value-text>'
-            s = vcard.add('related')
-            s.type_param = 'spouse'
-            s.value = el.text
-            continue
-        if el.tag == 'OPFContactCustomData7' and el.text is not None:
-            # Map to 'RELATED;type=MAIDENNAME:<value-text>'
-            m = vcard.add('related')
-            m.type_param = 'maidenname'
-            m.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyChildren':
-            # Map to 'RELATED;type=CHILD:<value-text>'
-            for child in el:
-                if child.tag != 'string' or child.text is None:
-                    continue
-                c = vcard.add('related')
-                c.type_param = 'child'
-                c.value = child.text
-            continue
-        if el.tag == 'OPFContactCopyNotesPlain' and el.text is not None:
-            # Map to 'NOTE'
-            note = el.text.strip()
-            if note:
-                vcard.add('note').value = note
-            continue
-        if el.tag in ('OPFContactCopyDefaultEmailAddress', 'OPFContactCopyEmailAddressList', 'OPFContactCopyEmailAddressList1', 'OPFContactCopyEmailAddressList2'):
-            # Microsoft Office Contacts XML for emails is just crazy.  There are
-            # four lists for no apparent reason.  First create a dictionary of
-            # all the unique email addresses removing any duplicates.  Below
-            # we'll process them when we have finished with all the contact
-            # elements.
-            for child in el:
-                email = child.attrib['OPFContactEmailAddressAddress']
-                if email not in email_d:
-                    email_d[email] = dict(primary=child.attrib['OPFContactEmailAddressIsDefault'], emailtype=child.attrib['OPFContactEmailAddressType'])
-                else:
-                    if (email_d[email]['primary'] != child.attrib['OPFContactEmailAddressIsDefault']) or (email_d[email]['emailtype'] != child.attrib['OPFContactEmailAddressType']):
-                        print(f"Error: for contact {contact_id:d}, an email address, `{email}`, has inconsistent attributes: previously found '{email_d}', encountered '{child.attrib}'", file=sys.stderr)
-                        sys.exit(1)
-            continue
-        if el.tag == 'OPFContactCopyPrimaryCategory':
-            # Map to 'CATEGORIES;type=pref:...'
-            for child in el:
-                if child.tag == 'OPFCategoryCopyName' and child.text is not None:
-                    cats = vcard.add('categories')
-                    cats.value = [child.text]
-                    cats.type_param = 'pref'
-            continue
-        if el.tag == 'OPFContactCopyCategoryList':
-            # Map to 'CATEGORIES:...'
-            cat_l = []
-            for child in el:
-                if child.tag != 'category':
-                    continue
-                if 'OPFCategoryCopyName' in child.attrib:
-                    cat_l.append(child.attrib['OPFCategoryCopyName'])
-            vcard.add('categories').value = cat_l
-            continue
-        raise Exception(f"{el.tag}")
-    if department or company or office:
-        # Map to 'ORG:<company>;<office>;<department>'
-        val_l = []
-        if company:
-            val_l.append(company)
-        if office:
-            val_l.append(office)
-        if department:
-            val_l.append(department)
-        vcard.add('org').value = val_l
-        company = office = department = ''
-    if email_d:
-        #  An email type of "1" _seems_ to mean "home", "0" _seams_ to mean "work", and "2" _seems_ to mean "other".
-        for email in email_d.keys():
-            email_a = vcard.add('email')
-            email_a.value = email
-            email_tl = [ email_type_map_d[email_d[email]['emailtype']] ]
-            if email_d[email]['primary'] == '1':
-                email_tl.append('pref')
-            email_a.type_param = email_tl
-    print(vcard.serialize())
+            
+        yield contact.to_vcard(args.version)
+    
+    logging.info(f"Processed {processed} contacts "
+                f"({errors} errors, {skipped} skipped)")
+
+def main() -> None:
+    """Main entry point."""
+    try:
+        args = parse_args()
+        setup_logging(args.debug)
+        
+        # Validate input file
+        validate_xml_file(args.input_file)
+        
+        # Parse XML
+        tree = etree.parse(args.input_file)
+        root = tree.getroot()
+        
+        # Validate XML structure
+        validate_contact_xml(root)
+        
+        # Verify contact count
+        contacts_count = int(root.attrib.get('elementCount', 0))
+        actual_count = len(root)
+        if contacts_count != actual_count:
+            logging.warning(
+                f"XML elementCount ({contacts_count}) does not match "
+                f"number of contacts found ({actual_count})"
+            )
+        
+        # Process contacts
+        if args.output:
+            with open(args.output, 'w') as f:
+                for vcard in process_contacts(root, args):
+                    f.write(vcard.serialize())
+        else:
+            for vcard in process_contacts(root, args):
+                print(vcard.serialize(), end='')
+                
+    except Exception as e:
+        logging.error(str(e))
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
