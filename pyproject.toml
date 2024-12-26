@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "contacts"
+version = "0.1.0"
+description = "Tools for processing Microsoft Office XML contact files"
+authors = ["Peter Portante <peter.a.portante@gmail.com>"]
+readme = "README.md"
+license = "GPL-3.0-or-later"
+
+[tool.poetry.dependencies]
+python = "^3.6"
+lxml = "^4.9.3"
+vobject = "^0.9.6.1"
+
+[tool.poetry.scripts]
+xmltovcf = "contacts.xmltovcf:main"
+ppxml = "contacts.ppxml:main"
+contacttagfreq = "contacts.contacttagfreq:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
