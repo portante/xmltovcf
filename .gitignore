@@ -176,3 +176,6 @@ data
 # Python venv configuration
 pyvenv.cfg
 bin
+
+# Ignore any .vcf files
+*.vcf
