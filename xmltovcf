@@ -208,6 +208,7 @@ for contact in root:
     ha = ba = oa = None
     company = office = department = ''
     email_d = {}
+    categories_d = {}
     for el in contact:
         if el.tag in ignored_tags:
             # Skip any ignored tags first
@@ -444,19 +445,15 @@ for contact in root:
             # Map to 'CATEGORIES;type=pref:...'
             for child in el:
                 if child.tag == 'OPFCategoryCopyName' and child.text is not None:
-                    cats = vcard.add('categories')
-                    cats.value = [child.text]
-                    cats.type_param = 'pref'
+                    categories_d[child.text] = True
             continue
         if el.tag == 'OPFContactCopyCategoryList':
             # Map to 'CATEGORIES:...'
-            cat_l = []
             for child in el:
                 if child.tag != 'category':
                     continue
                 if 'OPFCategoryCopyName' in child.attrib:
-                    cat_l.append(child.attrib['OPFCategoryCopyName'])
-            vcard.add('categories').value = cat_l
+                    categories_d[child.attrib['OPFCategoryCopyName']] = False
             continue
         raise Exception(f"{el.tag}")
     if not fn_t:
@@ -485,4 +482,7 @@ for contact in root:
             if email_d[email]['primary'] == '1':
                 email_tl.append('pref')
             email_a.type_param = email_tl
+    if categories_d:
+        categories_l = [ k for k,y in sorted(categories_d.items(), key=lambda x: x[1], reverse=True) ]
+        vcard.add('categories').value = categories_l
     print(vcard.serialize())
