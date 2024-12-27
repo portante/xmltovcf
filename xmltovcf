@@ -204,6 +204,7 @@ for contact in root:
     n = vcard.add('n')
     name = vobject.vcard.Name()
     n.value = name
+    fn_t = given_t = family_t = ''
     ha = ba = oa = None
     company = office = department = ''
     email_d = {}
@@ -212,15 +213,15 @@ for contact in root:
             # Skip any ignored tags first
             continue
         if el.tag == 'OPFContactCopyDisplayName' and el.text is not None:
-            fn.value = el.text
+            fn.value = fn_t = el.text
             continue
         if el.tag == 'OPFContactCopyFirstName' and el.text is not None:
             # Map to 'N'->'given'
-            name.given = el.text
+            name.given = given_t = el.text
             continue
         if el.tag == 'OPFContactCopyLastName' and el.text is not None:
             # Map to 'N'->'family'
-            name.family = el.text
+            name.family = family_t = el.text
             continue
         if el.tag == 'OPFContactCopyMiddleName' and el.text is not None:
             # Map to 'N'->'additional'
@@ -458,6 +459,12 @@ for contact in root:
             vcard.add('categories').value = cat_l
             continue
         raise Exception(f"{el.tag}")
+    if not fn_t:
+        fn_t = f"{given_t} {family_t}".strip()
+        if not fn_t:
+            print(f"Error: for contact {contact_id:d}, no given or family name found", file=sys.stderr)
+            sys.exit(1)
+        fn.value = fn_t
     if department or company or office:
         # Map to 'ORG:<company>;<office>;<department>'
         val_l = []
