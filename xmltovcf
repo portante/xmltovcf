@@ -163,6 +163,16 @@ for contact in root:
             print(f"Error: contact #{contact_id:d} has an unexpected tag, '{el.tag}': '{el.text}'", file=sys.stderr)
             sys.exit(1)
         handled_tags_d[el.tag] += 1
+missing = 0
+for tag, count in handled_tags_d.items():
+    if tag in ignored_tags:
+        # Don't consider any ignored tags
+        continue
+    if count == 0:
+        print(f"Error: did not encounter tag, '{tag}'", file=sys.stderr)
+        missing += 1
+if missing > 0:
+    sys.exit(1)
 
 def hom_adr(ha, vcard):
     if ha is not None:
@@ -191,6 +201,9 @@ def oth_adr(oa, vcard):
     adr.type_param = 'other'
     return oa
 
+def process_country(country):
+    return '' if country in ('USA', 'United States', 'United States of America') else country
+
 # Now that we have verified that all the tags in the list of contacts are
 # handled we can begin building the vCards.
 
@@ -212,32 +225,26 @@ for contact in root:
     for el in contact:
         if el.tag in ignored_tags:
             # Skip any ignored tags first
-            continue
-        if el.tag == 'OPFContactCopyDisplayName' and el.text is not None:
+            pass
+        elif el.tag == 'OPFContactCopyDisplayName' and el.text is not None:
             fn.value = fn_t = el.text
-            continue
-        if el.tag == 'OPFContactCopyFirstName' and el.text is not None:
+        elif el.tag == 'OPFContactCopyFirstName' and el.text is not None:
             # Map to 'N'->'given'
             name.given = given_t = el.text
-            continue
-        if el.tag == 'OPFContactCopyLastName' and el.text is not None:
+        elif el.tag == 'OPFContactCopyLastName' and el.text is not None:
             # Map to 'N'->'family'
             name.family = family_t = el.text
-            continue
-        if el.tag == 'OPFContactCopyMiddleName' and el.text is not None:
+        elif el.tag == 'OPFContactCopyMiddleName' and el.text is not None:
             # Map to 'N'->'additional'
             name.additional = el.text
-            continue
-        if el.tag == 'OPFContactCopySetNameSuffix' and el.text is not None:
+        elif el.tag == 'OPFContactCopySetNameSuffix' and el.text is not None:
             # Map to 'N'->'suffix'
             name.suffix = el.text
-            continue
-        if el.tag == 'OPFContactCopyNickName' and el.text is not None:
+        elif el.tag == 'OPFContactCopyNickName' and el.text is not None:
             # Map to 'NICKNAME'
             nn = vcard.add('NICKNAME')
             nn.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyTitle' and el.text is not None:
+        elif el.tag == 'OPFContactCopyTitle' and el.text is not None:
             if 0:
                 # Typically this would be mapped to 'N'->'prefix'
                 n.prefix = el.text
@@ -250,168 +257,139 @@ for contact in root:
                 #  X-ABLabel:Christmas Card Name
                 cl = vcard.add('X-ABLabel')
                 cl.value = 'Christmas Card Name'
-            continue
-        if el.tag == 'OPFContactCopyHomeStreetAddress' and el.text is not None:
+        elif el.tag == 'OPFContactCopyHomeStreetAddress' and el.text is not None:
             # Map to 'ADR;type=HOME;type=pref:;;\n5081 Glen Canyon Dr;Virginia Beach;VA;23462;'
             ha = hom_adr(ha, vcard)
             ha.street = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomeCity' and el.text is not None:
+        elif el.tag == 'OPFContactCopyHomeCity' and el.text is not None:
             ha = hom_adr(ha, vcard)
             ha.city = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomeState' and el.text is not None:
+        elif el.tag == 'OPFContactCopyHomeState' and el.text is not None:
             ha = hom_adr(ha, vcard)
             ha.region = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomeZip' and el.text is not None:
+        elif el.tag == 'OPFContactCopyHomeZip' and el.text is not None:
             ha = hom_adr(ha, vcard)
             ha.code = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomeCountry' and el.text is not None:
-            ha = hom_adr(ha, vcard)
-            ha.country = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessStreetAddress' and el.text is not None:
+        elif el.tag == 'OPFContactCopyHomeCountry' and el.text is not None:
+            country = process_country(el.text)
+            if country:
+                ha = hom_adr(ha, vcard)
+                ha.country = country
+        elif el.tag == 'OPFContactCopyBusinessStreetAddress' and el.text is not None:
             # Map to 'ADR;type=WORK;type=pref:;;438 King St;Littleton;MA;01460;USA'
             ba = bus_adr(ba, vcard)
             ba.street = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessCity' and el.text is not None:
+        elif el.tag == 'OPFContactCopyBusinessCity' and el.text is not None:
             ba = bus_adr(ba, vcard)
             ba.city = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessState' and el.text is not None:
+        elif el.tag == 'OPFContactCopyBusinessState' and el.text is not None:
             ba = bus_adr(ba, vcard)
             ba.region = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessZip' and el.text is not None:
+        elif el.tag == 'OPFContactCopyBusinessZip' and el.text is not None:
             ba = bus_adr(ba, vcard)
             ba.code = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessCountry' and el.text is not None:
-            ba = bus_adr(ba, vcard)
-            ba.country = el.text
-            continue
-        if el.tag == 'OPFContactCopyOtherStreetAddress' and el.text is not None:
+        elif el.tag == 'OPFContactCopyBusinessCountry' and el.text is not None:
+            country = process_country(el.text)
+            if country:
+                ba = bus_adr(ba, vcard)
+                ba.country = country
+        elif el.tag == 'OPFContactCopyOtherStreetAddress' and el.text is not None:
             # Map to 'ADR;type=OTHER:;;86 Crestwood Drive;Northborough;MA;01532-1831;'
             oa = oth_adr(oa, vcard)
             oa.street = el.text
-            continue
-        if el.tag == 'OPFContactCopyOtherCity' and el.text is not None:
+        elif el.tag == 'OPFContactCopyOtherCity' and el.text is not None:
             oa = oth_adr(oa, vcard)
             oa.city = el.text
-            continue
-        if el.tag == 'OPFContactCopyOtherState' and el.text is not None:
+        elif el.tag == 'OPFContactCopyOtherState' and el.text is not None:
             oa = oth_adr(oa, vcard)
             oa.region = el.text
-            continue
-        if el.tag == 'OPFContactCopyOtherZip' and el.text is not None:
+        elif el.tag == 'OPFContactCopyOtherZip' and el.text is not None:
             oa = oth_adr(oa, vcard)
             oa.code = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomeFax' and el.text is not None:
+        elif el.tag == 'OPFContactCopyHomeFax' and el.text is not None:
             # Map to 'TEL;type=HOME;type=FAX:603.579.0716'
             tel = vcard.add('tel')
             tel.type_param = ['home', 'fax']
             tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomePhone' and el.text is not None:
+        elif el.tag == 'OPFContactCopyHomePhone' and el.text is not None:
             # Map to 'TEL;type=HOME;type=VOICE;type=pref:603.579.0716'
             tel = vcard.add('tel')
             tel.type_param = ['home', 'voice']
             tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyHomePhone2' and el.text is not None:
+        elif el.tag == 'OPFContactCopyHomePhone2' and el.text is not None:
             # Map to 'TEL;type=HOME;type=VOICE:603.579.0716'
             tel = vcard.add('tel')
             tel.type_param = ['home2', 'voice']
             tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyCellPhone' and el.text is not None:
+        elif el.tag == 'OPFContactCopyCellPhone' and el.text is not None:
             # Map to 'TEL;type=CELL;type=VOICE:603.579.0716'
             tel = vcard.add('tel')
             tel.type_param = ['cell', 'voice']
             tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessFax' and el.text is not None:
+        elif el.tag == 'OPFContactCopyBusinessFax' and el.text is not None:
             # Map to 'TEL;type=WORK;type=FAX:603.579.0716'
             tel = vcard.add('tel')
             tel.type_param = ['work', 'fax']
             tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessPhone' and el.text is not None:
+        elif el.tag == 'OPFContactCopyBusinessPhone' and el.text is not None:
             # Map to 'TEL;type=WORK;type=VOICE;type=pref:603.579.0716'
             tel = vcard.add('tel')
             tel.type_param = ['work', 'voice']
             tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessPhone2' and el.text is not None:
+        elif el.tag == 'OPFContactCopyBusinessPhone2' and el.text is not None:
             # Map to 'TEL;type=WORK;type=VOICE:603.579.0716'
             tel = vcard.add('tel')
             tel.type_param = ['work2', 'voice']
             tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyCustomPhone1' and el.text is not None:
+        elif el.tag == 'OPFContactCopyCustomPhone1' and el.text is not None:
             # Map to 'TEL;type=OTHER;type=VOICE:<value.text>'
             tel = vcard.add('tel')
             tel.type_param = ['other', 'voice']
             tel.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessTitle' and el.text is not None:
+        elif el.tag == 'OPFContactCopyBusinessTitle' and el.text is not None:
             # Map to 'TITLE'
             vcard.add('title').value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessDepartment':
-            # Map to 'ORG:<company>;<office>;<department>', but just get the
-            # values here, assemble after read all contact tags.
-            department = el.text.strip()
-            continue
-        if el.tag == 'OPFContactCopyBusinessCompany':
-            # Map to 'ORG:<company>;<office>;<department>', but just get the
+        elif el.tag == 'OPFContactCopyBusinessCompany':
+            # Map to 'ORG:<company>;<department>,<office>', but just get the
             # values here, assemble after read all contact tags.
             company = el.text.strip()
-            continue
-        if el.tag == 'OPFContactCopyBusinessOffice':
-            # Map to 'ORG:<company>;<office>;<department>', but just get the
+        elif el.tag == 'OPFContactCopyBusinessDepartment':
+            # Map to 'ORG:<company>;<department>,<office>', but just get the
+            # values here, assemble after read all contact tags.
+            department = el.text.strip()
+        elif el.tag == 'OPFContactCopyBusinessOffice':
+            # Map to 'ORG:<company>;<department>,<office>', but just get the
             # values here, assemble after read all contact tags.
             office = el.text.strip()
-            continue
-        if el.tag == 'OPFContactCopyHomeWebPage' and el.text is not None:
+        elif el.tag == 'OPFContactCopyHomeWebPage' and el.text is not None:
             # Map to 'URL;type=HOME:...'
             url = vcard.add('url')
             url.type_param = 'home'
             url.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBusinessHomePage' and el.text is not None:
+        elif el.tag == 'OPFContactCopyBusinessHomePage' and el.text is not None:
             # Map to 'URL;type=WORK:...'
             url = vcard.add('url')
             url.type_param = 'work'
             url.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyAnniversary' and el.text is not None:
+        elif el.tag == 'OPFContactCopyAnniversary' and el.text is not None:
             # Map to 'ANNIVERSARY'
             ann = vcard.add('anniversary')
             ann.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyBirthday' and el.text is not None:
+        elif el.tag == 'OPFContactCopyBirthday' and el.text is not None:
             # Map to 'BDAY'
             bd = vcard.add('bday')
             bd.value = el.text
-            continue
-        if el.tag == 'OPFContactCopySpousesName' and el.text is not None:
+        elif el.tag == 'OPFContactCopySpousesName' and el.text is not None:
             # Map to 'RELATED;type=SPOUSE:<value-text>'
             s = vcard.add('related')
             s.type_param = 'spouse'
             s.value = el.text
-            continue
-        if el.tag == 'OPFContactCustomData7' and el.text is not None:
+        elif el.tag == 'OPFContactCustomData7' and el.text is not None:
             # Map to 'RELATED;type=MAIDENNAME:<value-text>'
             m = vcard.add('related')
-            m.type_param = 'maidenname'
+            m.type_param = 'maiden'
             m.value = el.text
-            continue
-        if el.tag == 'OPFContactCopyChildren':
+        elif el.tag == 'OPFContactCopyChildren':
             # Map to 'RELATED;type=CHILD:<value-text>'
             for child in el:
                 if child.tag != 'string' or child.text is None:
@@ -419,14 +397,12 @@ for contact in root:
                 c = vcard.add('related')
                 c.type_param = 'child'
                 c.value = child.text
-            continue
-        if el.tag == 'OPFContactCopyNotesPlain' and el.text is not None:
+        elif el.tag == 'OPFContactCopyNotesPlain' and el.text is not None:
             # Map to 'NOTE'
             note = el.text.strip()
             if note:
                 vcard.add('note').value = note
-            continue
-        if el.tag in ('OPFContactCopyDefaultEmailAddress', 'OPFContactCopyEmailAddressList', 'OPFContactCopyEmailAddressList1', 'OPFContactCopyEmailAddressList2'):
+        elif el.tag in ('OPFContactCopyDefaultEmailAddress', 'OPFContactCopyEmailAddressList', 'OPFContactCopyEmailAddressList1', 'OPFContactCopyEmailAddressList2'):
             # Microsoft Office Contacts XML for emails is just crazy.  There are
             # four lists for no apparent reason.  First create a dictionary of
             # all the unique email addresses removing any duplicates.  Below
@@ -440,22 +416,20 @@ for contact in root:
                     if (email_d[email]['primary'] != child.attrib['OPFContactEmailAddressIsDefault']) or (email_d[email]['emailtype'] != child.attrib['OPFContactEmailAddressType']):
                         print(f"Error: for contact {contact_id:d}, an email address, `{email}`, has inconsistent attributes: previously found '{email_d}', encountered '{child.attrib}'", file=sys.stderr)
                         sys.exit(1)
-            continue
-        if el.tag == 'OPFContactCopyPrimaryCategory':
+        elif el.tag == 'OPFContactCopyPrimaryCategory':
             # Map to 'CATEGORIES;type=pref:...'
             for child in el:
                 if child.tag == 'OPFCategoryCopyName' and child.text is not None:
                     categories_d[child.text] = True
-            continue
-        if el.tag == 'OPFContactCopyCategoryList':
+        elif el.tag == 'OPFContactCopyCategoryList':
             # Map to 'CATEGORIES:...'
             for child in el:
                 if child.tag != 'category':
                     continue
                 if 'OPFCategoryCopyName' in child.attrib:
                     categories_d[child.attrib['OPFCategoryCopyName']] = False
-            continue
-        raise Exception(f"{el.tag}")
+        else:
+            raise Exception(f"{el.tag}")
     if not fn_t:
         fn_t = f"{given_t} {family_t}".strip()
         if not fn_t:
@@ -467,8 +441,13 @@ for contact in root:
         val_l = []
         if company:
             val_l.append(company)
-        if office:
-            val_l.append(office)
+        else:
+            print(f"Error: for contact {contact_id:d} ({fn_t}), no company defined", file=sys.stderr)
+            sys.exit(1)
+        if not department:
+            department = office
+        elif office:
+            department = f"{department}, {office}"
         if department:
             val_l.append(department)
         vcard.add('org').value = val_l
