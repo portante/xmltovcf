@@ -170,8 +170,8 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# Local data used to experiment with XML to vCard conversion
-data
+# Apple Finder files
+.DS_Store
 
 # Python venv configuration
 pyvenv.cfg
