@@ -141,7 +141,7 @@ class ADR(object):
 
     def genLines(self):
         country = '' if self.country in ('USA', 'United States', 'United States of America') else self.country
-        adr_s = ";".join([self.box, self.extended, self.street, self.city, self.region, self.code, country])
+        adr_s = ";".join([_bE(self.box), _bE(self.extended), _bE(self.street), _bE(self.city), _bE(self.region), _bE(self.code), _bE(country)])
         if adr_s == ';;;;;;':
             return
         type_l = [self.kind, self.pref] if self.pref else [self.kind]
@@ -157,13 +157,12 @@ class NOTE(object):
     def addCategory(self, category, primary=False):
         self.categories_d[category] = primary
 
-    def genLines(self):
+    def genLines(self, cardid):
+        extra_s = f"\nCard ID (xmltovcf): {cardid:05d}"
         if self.categories_d:
             categories_l = [ f"'{k}'" for k,y in sorted(self.categories_d.items(), key=lambda x: x[1], reverse=True) ]
             categories_s = ", ".join(categories_l)
-            extra_s = f"\nImported Categories: {categories_s}"
-        else:
-            extra_s = ""
+            extra_s += f"\nImported Categories: {categories_s}"
         value_s = (self.value + extra_s).strip()
         if value_s:
             yield f"NOTE:{_bE(value_s)}"
@@ -247,22 +246,25 @@ class vCard(object):
         self.TELs = TELs()
         self.URLs = URLs()
         self.BDAY = BDAY()
+        self._fields = ['N', 'FN', 'NICKNAME', 'ORG', 'TITLE', 'EMAILs', 'hADR', 'bADR', 'oADR', 'TELs', 'URLs', 'BDAY']
         self.ANNIVERSARY = ANNIVERSARY()
         self.X_ABRELATEDNAMESs = X_ABRELATEDNAMESs()
         self.NOTE = NOTE()
-        self._fields = ['N', 'FN', 'NICKNAME', 'ORG', 'TITLE', 'EMAILs', 'hADR', 'bADR', 'oADR', 'TELs', 'URLs', 'BDAY', 'NOTE']
 
-    def serialize(self):
+    def serialize(self, cardid):
         if not self.FN.value:
             self.FN.value = self.N.fullName()
 
         yield "BEGIN:VCARD"
         yield "VERSION:3.0"
+        yield "PRODID:-//github.com/portante/xmltovcf"
         for field in self._fields:
             obj = getattr(self, field)
             for line in obj.genLines():
                 yield line
         itemctx = ctx()
+        for line in self.NOTE.genLines(cardid):
+            yield line
         for line in self.ANNIVERSARY.genLines(itemctx):
             yield line
         for line in self.X_ABRELATEDNAMESs.genLines(itemctx):
@@ -591,5 +593,5 @@ for contact in root:
         print()
     else:
         first = False
-    for line in vcard.serialize():
+    for line in vcard.serialize(contact_id):
         print(line)
