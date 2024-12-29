@@ -4,7 +4,6 @@
 
 from lxml import etree
 import sys
-import vobject
 
 space_s = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -13,6 +12,265 @@ tree = etree.parse(sys.argv[1])
 
 # Start at the root of the tree.
 root = tree.getroot()
+
+
+def _bE(s):
+    s = s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    return s.replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "\\n")
+
+
+class N(object):
+    def __init__(self):
+        self.prefix = ''
+        self.given = ''
+        self.family = ''
+        self.additional = ''
+        self.suffix = ''
+
+    def fullName(self):
+        fn_s = f"{self.given} {self.family}".strip()
+        if not fn_s:
+            raise ValueError("No given or family name present")
+        return fn_s
+
+    def genLines(self):
+        n_s = ';'.join([_bE(self.family), _bE(self.given), _bE(self.additional), _bE(self.prefix), _bE(self.suffix)])
+        yield f"N:{n_s}"
+
+
+class Value(object):
+    obj_n = None
+
+    def __init__(self):
+        self.value = ''
+
+    def genLines(self):
+        if not self.obj_n:
+            raise Exception("ERROR: missing object name for a Value object")
+        if not self.value:
+            return
+        yield f"{self.obj_n}:{_bE(self.value)}"
+
+
+class FN(Value):
+    obj_n = "FN"
+
+
+class NICKNAME(Value):
+    obj_n = "NICKNAME"
+
+
+class ORG(object):
+    def __init__(self):
+        self.company = ''
+        self.department = ''
+        self.office = ''
+
+    def genLines(self):
+        # Map to 'ORG:<company>;<office>;<department>'
+        if not (self.company or self.department or self.office):
+            return
+        if not self.company:
+            raise ValueError("No company defined")
+        if not self.department:
+            self.department = self.office
+        elif self.office:
+            self.department = f"{self.department}, {self.office}"
+            self.office = ''
+        line = f"ORG:{_bE(self.company)}"
+        if self.department:
+            line = f"{line};{_bE(self.department)}"
+        yield line
+
+
+class TITLE(Value):
+    obj_n = "TITLE"
+
+
+class EMAILs(object):
+    # Email "type" mapping
+    email_type_map_d = { '0': 'work', '1': 'home', '2': 'other' }
+
+    def __init__(self):
+        self.email_d = {}
+
+    def add(self, address, primary, etype):
+        if address in self.email_d:
+            if (self.email_d[address]['primary'] != primary) or (self.email_d[address]['etype'] != etype):
+                raise ValueError(f"Email address, `{address}`, has inconsistent attributes: previously found '{self.email_d[address]}', encountered 'primary={primary},etype={etype}'")
+        else:
+            self.email_d[address] = { 'primary': primary, 'etype': etype }
+
+    def genLines(self):
+        if not self.email_d:
+            return
+        #  An email type of "1" _seems_ to mean "home", "0" _seams_ to
+        #  mean "work", and "2" _seems_ to mean "other".
+        for address in self.email_d.keys():
+            types_l = [ "INTERNET" ] + [ self.email_type_map_d[self.email_d[address]['etype']] ]
+            if self.email_d[address]['primary'] == '1':
+                types_l.append('pref')
+            types_s = ",".join(types_l)
+            yield f"EMAIL;TYPE={types_s}:{address}"
+
+
+class TELs(object):
+    def __init__(self):
+        self.tel_l = []
+
+    def add(self, value, types_l):
+        self.tel_l.append((value, types_l))
+
+    def genLines(self):
+        for (value, types_l) in self.tel_l:
+            types_s = ",".join(types_l)
+            yield f"TEL;TYPE={types_s}:{value}"
+
+
+class ADR(object):
+    def __init__(self, kind, pref=False):
+        self.box = ''
+        self.extended = ''
+        self.street = ''
+        self.city = ''
+        self.region = ''
+        self.code = ''
+        self.country = ''
+        self.kind = kind
+        self.pref = 'pref' if pref else ''
+
+    def genLines(self):
+        country = '' if self.country in ('USA', 'United States', 'United States of America') else self.country
+        adr_s = ";".join([self.box, self.extended, self.street, self.city, self.region, self.code, country])
+        if adr_s == ';;;;;;':
+            return
+        type_l = [self.kind, self.pref] if self.pref else [self.kind]
+        type_s = ",".join(type_l)
+        yield f"ADR;TYPE={type_s}:{adr_s}"
+
+
+class NOTE(object):
+    def __init__(self):
+        self.value = ''
+        self.categories_d = {}
+
+    def addCategory(self, category, primary=False):
+        self.categories_d[category] = primary
+
+    def genLines(self):
+        if self.categories_d:
+            categories_l = [ f"'{k}'" for k,y in sorted(self.categories_d.items(), key=lambda x: x[1], reverse=True) ]
+            categories_s = ", ".join(categories_l)
+            extra_s = f"\nImported Categories: {categories_s}"
+        else:
+            extra_s = ""
+        value_s = (self.value + extra_s).strip()
+        if value_s:
+            yield f"NOTE:{_bE(value_s)}"
+
+
+class URLs(object):
+    def __init__(self):
+        self.urls_l = []
+
+    def add(self, url, utype):
+        self.urls_l.append((url, utype))
+
+    def genLines(self):
+        for (url, utype) in self.urls_l:
+            yield f"URL;TYPE={utype}:{url}"
+
+
+class BDAY(Value):
+    obj_n = "BDAY"
+
+
+class ANNIVERSARY(object):
+    '''Uses X-ABDATE with an X-ABLabel.'''
+    def __init__(self):
+        self.value = ''
+
+    def genLines(self, itemn):
+        if not self.value:
+            return
+        yield f"item{itemn}.X-ABDATE;type=pref:{self.value}"
+        yield f"item{itemn}.X-ABLabel:_$!<Anniversary>!$_"
+        itemn += 1
+
+
+class X_ABRELATEDNAMESs(object):
+    def __init__(self):
+        self.values_l = []
+
+    def add(self, value, label):
+        self.values_l.append((value, label))
+
+    def genLines(self, itemn):
+        for (value, label) in self.values_l:
+            if label == "Christmas Card Name":
+                pref_s = ";type=pref"
+                label_s = label
+            elif label == "maiden":
+                pref_s = ''
+                label_s = label
+            else:
+                pref_s = ''
+                label_s = f"_$!<{label.capitalize()}>!$_"
+            yield f"item{itemn}.X-ABRELATEDNAMES{pref_s}:{value}"
+            yield f"item{itemn}.X-ABLabel:{label_s}"
+            itemn += 1
+
+
+class ctx(object):
+    def __init__(self):
+        self.itemn = 1
+
+    def __add__(self, other):
+        self.itemn += other
+        return self
+
+    def __str__(self):
+        return str(self.itemn)
+
+
+class vCard(object):
+    def __init__(self):
+        self.N = N()
+        self.FN = FN()
+        self.NICKNAME = NICKNAME()
+        self.ORG = ORG()
+        self.TITLE = TITLE()
+        self.EMAILs = EMAILs()
+        self.hADR = ADR('home', True)
+        self.bADR = ADR('work')
+        self.oADR = ADR('other')
+        self.TELs = TELs()
+        self.URLs = URLs()
+        self.BDAY = BDAY()
+        self.ANNIVERSARY = ANNIVERSARY()
+        self.X_ABRELATEDNAMESs = X_ABRELATEDNAMESs()
+        self.NOTE = NOTE()
+        self._fields = ['N', 'FN', 'NICKNAME', 'ORG', 'TITLE', 'EMAILs', 'hADR', 'bADR', 'oADR', 'TELs', 'URLs', 'BDAY', 'NOTE']
+
+    def serialize(self):
+        if not self.FN.value:
+            self.FN.value = self.N.fullName()
+
+        yield "BEGIN:VCARD"
+        yield "VERSION:3.0"
+        for field in self._fields:
+            obj = getattr(self, field)
+            for line in obj.genLines():
+                yield line
+        itemctx = ctx()
+        for line in self.ANNIVERSARY.genLines(itemctx):
+            yield line
+        for line in self.X_ABRELATEDNAMESs.genLines(itemctx):
+            yield line
+        if ("Business" in self.NOTE.categories_d) or ("Businesses" in self.NOTE.categories_d):
+            yield "X-ABShowAs:COMPANY"
+        yield "END:VCARD"
+
 
 ignored_tags = frozenset((
     'OPFContactCanDelete',
@@ -127,9 +385,6 @@ handled_tags_d = {
     'OPFContactCopyCategoryList': 0,		# Map to 'CATEGORIES:...'
 }
 
-# Email "type" mapping
-email_type_map_d = { '0': 'work', '1': 'home', '2': 'other' }
-
 # First very the total number of contacts match the element count
 contacts_n = int(root.attrib['elementCount'])
 root_n = len(root)
@@ -174,234 +429,142 @@ for tag, count in handled_tags_d.items():
 if missing > 0:
     sys.exit(1)
 
-def hom_adr(ha, vcard):
-    if ha is not None:
-        return ha
-    ha = vobject.vcard.Address()
-    adr = vcard.add('adr')
-    adr.value = ha
-    adr.type_param = ['home', 'pref']
-    return ha
-
-def bus_adr(ba, vcard):
-    if ba is not None:
-        return ba
-    ba = vobject.vcard.Address()
-    adr = vcard.add('adr')
-    adr.value = ba
-    adr.type_param = 'work'
-    return ba
-
-def oth_adr(oa, vcard):
-    if oa is not None:
-        return oa
-    oa = vobject.vcard.Address()
-    adr = vcard.add('adr')
-    adr.value = oa
-    adr.type_param = 'other'
-    return oa
-
-def process_country(country):
-    return '' if country in ('USA', 'United States', 'United States of America') else country
-
 # Now that we have verified that all the tags in the list of contacts are
 # handled we can begin building the vCards.
 
+first = True
 contact_id = 0
 for contact in root:
     contact_id += 1
     # Create a vCard and add the required "N" and "FN" fields.  These are going
     # to be filled in as we process the contact tags.
-    vcard = vobject.vCard()
-    fn = vcard.add('fn')
-    n = vcard.add('n')
-    name = vobject.vcard.Name()
-    n.value = name
-    fn_t = given_t = family_t = ''
-    ha = ba = oa = None
-    company = office = department = ''
-    email_d = {}
-    categories_d = {}
+    vcard = vCard()
     for el in contact:
         if el.tag in ignored_tags:
             # Skip any ignored tags first
             pass
         elif el.tag == 'OPFContactCopyDisplayName' and el.text is not None:
-            fn.value = fn_t = el.text
+            vcard.FN.value = el.text
         elif el.tag == 'OPFContactCopyFirstName' and el.text is not None:
             # Map to 'N'->'given'
-            name.given = given_t = el.text
+            vcard.N.given = el.text
         elif el.tag == 'OPFContactCopyLastName' and el.text is not None:
             # Map to 'N'->'family'
-            name.family = family_t = el.text
+            vcard.N.family = el.text
         elif el.tag == 'OPFContactCopyMiddleName' and el.text is not None:
             # Map to 'N'->'additional'
-            name.additional = el.text
+            vcard.N.additional = el.text
         elif el.tag == 'OPFContactCopySetNameSuffix' and el.text is not None:
             # Map to 'N'->'suffix'
-            name.suffix = el.text
+            vcard.N.suffix = el.text
         elif el.tag == 'OPFContactCopyNickName' and el.text is not None:
             # Map to 'NICKNAME'
-            nn = vcard.add('NICKNAME')
-            nn.value = el.text
+            vcard.NICKNAME.value = el.text
         elif el.tag == 'OPFContactCopyTitle' and el.text is not None:
             if 0:
                 # Typically this would be mapped to 'N'->'prefix'
-                n.prefix = el.text
+                vcard.N.prefix = el.text
             else:
                 # ... but, I had hijacked that name for Christmas card label name
                 #  X-ABRELATEDNAMES;type=pref:<value-text>
-                cc = vcard.add('X-ABRELATEDNAMES')
-                cc.type_param = 'pref'
-                cc.value = el.text
-                #  X-ABLabel:Christmas Card Name
-                cl = vcard.add('X-ABLabel')
-                cl.value = 'Christmas Card Name'
+                vcard.X_ABRELATEDNAMESs.add(el.text, 'Christmas Card Name')
         elif el.tag == 'OPFContactCopyHomeStreetAddress' and el.text is not None:
             # Map to 'ADR;type=HOME;type=pref:;;\n5081 Glen Canyon Dr;Virginia Beach;VA;23462;'
-            ha = hom_adr(ha, vcard)
-            ha.street = el.text
+            vcard.hADR.street = el.text
         elif el.tag == 'OPFContactCopyHomeCity' and el.text is not None:
-            ha = hom_adr(ha, vcard)
-            ha.city = el.text
+            vcard.hADR.city = el.text
         elif el.tag == 'OPFContactCopyHomeState' and el.text is not None:
-            ha = hom_adr(ha, vcard)
-            ha.region = el.text
+            vcard.hADR.region = el.text
         elif el.tag == 'OPFContactCopyHomeZip' and el.text is not None:
-            ha = hom_adr(ha, vcard)
-            ha.code = el.text
+            vcard.hADR.code = el.text
         elif el.tag == 'OPFContactCopyHomeCountry' and el.text is not None:
-            country = process_country(el.text)
-            if country:
-                ha = hom_adr(ha, vcard)
-                ha.country = country
+            vcard.hADR.country = el.text
         elif el.tag == 'OPFContactCopyBusinessStreetAddress' and el.text is not None:
             # Map to 'ADR;type=WORK;type=pref:;;438 King St;Littleton;MA;01460;USA'
-            ba = bus_adr(ba, vcard)
-            ba.street = el.text
+            vcard.bADR.street = el.text
         elif el.tag == 'OPFContactCopyBusinessCity' and el.text is not None:
-            ba = bus_adr(ba, vcard)
-            ba.city = el.text
+            vcard.bADR.city = el.text
         elif el.tag == 'OPFContactCopyBusinessState' and el.text is not None:
-            ba = bus_adr(ba, vcard)
-            ba.region = el.text
+            vcard.bADR.region = el.text
         elif el.tag == 'OPFContactCopyBusinessZip' and el.text is not None:
-            ba = bus_adr(ba, vcard)
-            ba.code = el.text
+            vcard.bADR.code = el.text
         elif el.tag == 'OPFContactCopyBusinessCountry' and el.text is not None:
-            country = process_country(el.text)
-            if country:
-                ba = bus_adr(ba, vcard)
-                ba.country = country
+            vcard.bADR.country = el.text
         elif el.tag == 'OPFContactCopyOtherStreetAddress' and el.text is not None:
             # Map to 'ADR;type=OTHER:;;86 Crestwood Drive;Northborough;MA;01532-1831;'
-            oa = oth_adr(oa, vcard)
-            oa.street = el.text
+            vcard.oADR.street = el.text
         elif el.tag == 'OPFContactCopyOtherCity' and el.text is not None:
-            oa = oth_adr(oa, vcard)
-            oa.city = el.text
+            vcard.oADR.city = el.text
         elif el.tag == 'OPFContactCopyOtherState' and el.text is not None:
-            oa = oth_adr(oa, vcard)
-            oa.region = el.text
+            vcard.oADR.region = el.text
         elif el.tag == 'OPFContactCopyOtherZip' and el.text is not None:
-            oa = oth_adr(oa, vcard)
-            oa.code = el.text
+            vcard.oADR.code = el.text
         elif el.tag == 'OPFContactCopyHomeFax' and el.text is not None:
             # Map to 'TEL;type=HOME;type=FAX:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['home', 'fax']
-            tel.value = el.text
+            vcard.TELs.add(el.text, ['home', 'fax'])
         elif el.tag == 'OPFContactCopyHomePhone' and el.text is not None:
             # Map to 'TEL;type=HOME;type=VOICE;type=pref:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['home', 'voice']
-            tel.value = el.text
+            vcard.TELs.add(el.text, ['home', 'voice'])
         elif el.tag == 'OPFContactCopyHomePhone2' and el.text is not None:
             # Map to 'TEL;type=HOME;type=VOICE:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['home2', 'voice']
-            tel.value = el.text
+            vcard.TELs.add(el.text, ['home2', 'voice'])
         elif el.tag == 'OPFContactCopyCellPhone' and el.text is not None:
             # Map to 'TEL;type=CELL;type=VOICE:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['cell', 'voice']
-            tel.value = el.text
+            vcard.TELs.add(el.text, ['cell', 'voice'])
         elif el.tag == 'OPFContactCopyBusinessFax' and el.text is not None:
             # Map to 'TEL;type=WORK;type=FAX:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['work', 'fax']
-            tel.value = el.text
+            vcard.TELs.add(el.text, ['work', 'fax'])
         elif el.tag == 'OPFContactCopyBusinessPhone' and el.text is not None:
             # Map to 'TEL;type=WORK;type=VOICE;type=pref:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['work', 'voice']
-            tel.value = el.text
+            vcard.TELs.add(el.text, ['work', 'voice'])
         elif el.tag == 'OPFContactCopyBusinessPhone2' and el.text is not None:
             # Map to 'TEL;type=WORK;type=VOICE:603.579.0716'
-            tel = vcard.add('tel')
-            tel.type_param = ['work2', 'voice']
-            tel.value = el.text
+            vcard.TELs.add(el.text, ['work2', 'voice'])
         elif el.tag == 'OPFContactCopyCustomPhone1' and el.text is not None:
             # Map to 'TEL;type=OTHER;type=VOICE:<value.text>'
-            tel = vcard.add('tel')
-            tel.type_param = ['other', 'voice']
-            tel.value = el.text
+            vcard.TELs.add(el.text, ['other', 'voice'])
         elif el.tag == 'OPFContactCopyBusinessTitle' and el.text is not None:
             # Map to 'TITLE'
-            vcard.add('title').value = el.text
+            vcard.TITLE.value = el.text
         elif el.tag == 'OPFContactCopyBusinessCompany':
             # Map to 'ORG:<company>;<department>,<office>', but just get the
             # values here, assemble after read all contact tags.
-            company = el.text.strip()
+            vcard.ORG.company = el.text.strip()
         elif el.tag == 'OPFContactCopyBusinessDepartment':
             # Map to 'ORG:<company>;<department>,<office>', but just get the
             # values here, assemble after read all contact tags.
-            department = el.text.strip()
+            vcard.ORG.department = el.text.strip()
         elif el.tag == 'OPFContactCopyBusinessOffice':
             # Map to 'ORG:<company>;<department>,<office>', but just get the
             # values here, assemble after read all contact tags.
-            office = el.text.strip()
+            vcard.ORG.office = el.text.strip()
         elif el.tag == 'OPFContactCopyHomeWebPage' and el.text is not None:
             # Map to 'URL;type=HOME:...'
-            url = vcard.add('url')
-            url.type_param = 'home'
-            url.value = el.text
+            vcard.URLs.add(el.text, 'home')
         elif el.tag == 'OPFContactCopyBusinessHomePage' and el.text is not None:
             # Map to 'URL;type=WORK:...'
-            url = vcard.add('url')
-            url.type_param = 'work'
-            url.value = el.text
+            vcard.URLs.add(el.text, 'work')
         elif el.tag == 'OPFContactCopyAnniversary' and el.text is not None:
             # Map to 'ANNIVERSARY'
-            ann = vcard.add('anniversary')
-            ann.value = el.text
+            vcard.ANNIVERSARY.value = el.text
         elif el.tag == 'OPFContactCopyBirthday' and el.text is not None:
             # Map to 'BDAY'
-            bd = vcard.add('bday')
-            bd.value = el.text
+            vcard.BDAY.value = el.text
         elif el.tag == 'OPFContactCopySpousesName' and el.text is not None:
             # Map to 'RELATED;type=SPOUSE:<value-text>'
-            s = vcard.add('related')
-            s.type_param = 'spouse'
-            s.value = el.text
+            vcard.X_ABRELATEDNAMESs.add(el.text, 'spouse')
         elif el.tag == 'OPFContactCustomData7' and el.text is not None:
-            # Map to 'RELATED;type=MAIDENNAME:<value-text>'
-            m = vcard.add('related')
-            m.type_param = 'maiden'
-            m.value = el.text
+            # Map to 'RELATED;type=MAIDEN:<value-text>'
+            vcard.X_ABRELATEDNAMESs.add(el.text, 'maiden')
         elif el.tag == 'OPFContactCopyChildren':
             # Map to 'RELATED;type=CHILD:<value-text>'
             for child in el:
                 if child.tag != 'string' or child.text is None:
                     continue
-                c = vcard.add('related')
-                c.type_param = 'child'
-                c.value = child.text
+                vcard.X_ABRELATEDNAMESs.add(child.text, 'child')
         elif el.tag == 'OPFContactCopyNotesPlain' and el.text is not None:
             # Map to 'NOTE'
-            note = el.text.strip()
-            if note:
-                vcard.add('note').value = note
+            vcard.NOTE.value = el.text
         elif el.tag in ('OPFContactCopyDefaultEmailAddress', 'OPFContactCopyEmailAddressList', 'OPFContactCopyEmailAddressList1', 'OPFContactCopyEmailAddressList2'):
             # Microsoft Office Contacts XML for emails is just crazy.  There are
             # four lists for no apparent reason.  First create a dictionary of
@@ -409,59 +572,24 @@ for contact in root:
             # we'll process them when we have finished with all the contact
             # elements.
             for child in el:
-                email = child.attrib['OPFContactEmailAddressAddress']
-                if email not in email_d:
-                    email_d[email] = dict(primary=child.attrib['OPFContactEmailAddressIsDefault'], emailtype=child.attrib['OPFContactEmailAddressType'])
-                else:
-                    if (email_d[email]['primary'] != child.attrib['OPFContactEmailAddressIsDefault']) or (email_d[email]['emailtype'] != child.attrib['OPFContactEmailAddressType']):
-                        print(f"Error: for contact {contact_id:d}, an email address, `{email}`, has inconsistent attributes: previously found '{email_d}', encountered '{child.attrib}'", file=sys.stderr)
-                        sys.exit(1)
+                vcard.EMAILs.add(child.attrib['OPFContactEmailAddressAddress'], child.attrib['OPFContactEmailAddressIsDefault'], child.attrib['OPFContactEmailAddressType'])
         elif el.tag == 'OPFContactCopyPrimaryCategory':
             # Map to 'CATEGORIES;type=pref:...'
             for child in el:
                 if child.tag == 'OPFCategoryCopyName' and child.text is not None:
-                    categories_d[child.text] = True
+                    vcard.NOTE.addCategory(child.text, primary=True)
         elif el.tag == 'OPFContactCopyCategoryList':
             # Map to 'CATEGORIES:...'
             for child in el:
                 if child.tag != 'category':
                     continue
                 if 'OPFCategoryCopyName' in child.attrib:
-                    categories_d[child.attrib['OPFCategoryCopyName']] = False
+                    vcard.NOTE.addCategory(child.attrib['OPFCategoryCopyName'])
         else:
             raise Exception(f"{el.tag}")
-    if not fn_t:
-        fn_t = f"{given_t} {family_t}".strip()
-        if not fn_t:
-            print(f"Error: for contact {contact_id:d}, no given or family name found", file=sys.stderr)
-            sys.exit(1)
-        fn.value = fn_t
-    if department or company or office:
-        # Map to 'ORG:<company>;<office>;<department>'
-        val_l = []
-        if company:
-            val_l.append(company)
-        else:
-            print(f"Error: for contact {contact_id:d} ({fn_t}), no company defined", file=sys.stderr)
-            sys.exit(1)
-        if not department:
-            department = office
-        elif office:
-            department = f"{department}, {office}"
-        if department:
-            val_l.append(department)
-        vcard.add('org').value = val_l
-        company = office = department = ''
-    if email_d:
-        #  An email type of "1" _seems_ to mean "home", "0" _seams_ to mean "work", and "2" _seems_ to mean "other".
-        for email in email_d.keys():
-            email_a = vcard.add('email')
-            email_a.value = email
-            email_tl = [ email_type_map_d[email_d[email]['emailtype']] ]
-            if email_d[email]['primary'] == '1':
-                email_tl.append('pref')
-            email_a.type_param = email_tl
-    if categories_d:
-        categories_l = [ k for k,y in sorted(categories_d.items(), key=lambda x: x[1], reverse=True) ]
-        vcard.add('categories').value = categories_l
-    print(vcard.serialize())
+    if not first:
+        print()
+    else:
+        first = False
+    for line in vcard.serialize():
+        print(line)
